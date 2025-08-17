@@ -12,7 +12,7 @@ import SwiftData
 struct teslaDashcamViewerApp: App {
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
-            Event4.self,
+            Event.self,
             VideoRecording.self,
         ])
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
@@ -26,7 +26,7 @@ struct teslaDashcamViewerApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            MainView()
         }
         .modelContainer(sharedModelContainer)
     }

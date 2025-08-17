@@ -9,18 +9,19 @@ import SwiftData
 import Foundation
 
 @Model
-final class Event4 {
-
+final class Event {
+    var source: String
     var camera: String
     var city: String
     var estLatitude: String
     var estLongitude: String
     var reason: String
-    var timestamp: String
+    var timestamp: Date
 
     var videos: [VideoRecording] = []
 
-    init(camera: String, city: String, estLatitude: String, estLongitude: String, reason: String, timestamp: String) {
+    init(source: String, camera: String, city: String, estLatitude: String, estLongitude: String, reason: String, timestamp: Date) {
+        self.source = source
         self.camera = camera
         self.city = city
         self.estLatitude = estLatitude

@@ -1,3 +1,10 @@
+//
+//  VideoPlayerView.swift
+//  teslaDashcamViewer
+//
+//  Created by Connor Lin on 8/17/25.
+//
+
 import SwiftUI
 import AVKit
 
