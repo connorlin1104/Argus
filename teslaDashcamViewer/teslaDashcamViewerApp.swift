@@ -10,17 +10,48 @@ import SwiftData
 
 @main
 struct teslaDashcamViewerApp: App {
+    static let iCloudSyncDefaultsKey = "iCloudSyncEnabled"
+
     var sharedModelContainer: ModelContainer = {
-        let schema = Schema([
-            Event.self,
-            VideoRecording.self,
-        ])
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+        let useICloud = UserDefaults.standard.bool(forKey: iCloudSyncDefaultsKey)
+
+        // Event + Geofence are syncable; VideoRecording stays local because it
+        // holds security-scoped URLs and bookmarks that don't translate across devices.
+        let cloudConfig = ModelConfiguration(
+            "MetadataStore",
+            schema: Schema([Event.self, Geofence.self]),
+            isStoredInMemoryOnly: false,
+            cloudKitDatabase: useICloud ? .automatic : .none
+        )
+        let localConfig = ModelConfiguration(
+            "VideosStore",
+            schema: Schema([VideoRecording.self]),
+            isStoredInMemoryOnly: false,
+            cloudKitDatabase: .none
+        )
 
         do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
+            return try ModelContainer(
+                for: Event.self, Geofence.self, VideoRecording.self,
+                configurations: cloudConfig, localConfig
+            )
         } catch {
-            fatalError("Could not create ModelContainer: \(error)")
+            // Most common cause: iCloud entitlement missing. Fall back to local-only.
+            print("CloudKit-backed container failed (\(error)); falling back to local store.")
+            let fallbackCloud = ModelConfiguration(
+                "MetadataStore",
+                schema: Schema([Event.self, Geofence.self]),
+                isStoredInMemoryOnly: false,
+                cloudKitDatabase: .none
+            )
+            do {
+                return try ModelContainer(
+                    for: Event.self, Geofence.self, VideoRecording.self,
+                    configurations: fallbackCloud, localConfig
+                )
+            } catch {
+                fatalError("Could not create ModelContainer: \(error)")
+            }
         }
     }()
 

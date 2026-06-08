@@ -9,24 +9,30 @@ import SwiftUI
 import SwiftData
 
 struct MainView: View {
-    @State private var selectedTab = 0
-
     var body: some View {
         TabView {
             TabSection("Events") {
-                Tab("Events", systemImage: "book.fill") {
+                Tab("Events", systemImage: "list.bullet") {
                     EventsListView()
+                }
+                Tab("Map", systemImage: "map.fill") {
+                    EventsMapView()
                 }
             }
             TabSection("Videos") {
-                Tab("Videos", systemImage: "book.fill") {
+                Tab("Videos", systemImage: "play.rectangle.fill") {
                     VideoListView(eventTime: nil)
                 }
             }
-
+            TabSection("Settings") {
+                Tab("Settings", systemImage: "gearshape.fill") {
+                    SettingsView()
+                }
+            }
         }
-        //.tabViewStyle(.sidebarAdaptable)
-
+        #if os(iOS)
+        .tabViewStyle(.sidebarAdaptable)
+        #endif
     }
 }
 

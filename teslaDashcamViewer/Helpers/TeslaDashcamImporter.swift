@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import AVFoundation
 
 //["0"] = "Front", ["3"] = "Left", ["4"] = "Right", ["5"] = "Rear"
 
@@ -21,8 +22,13 @@ enum FilenameParseError: Error, LocalizedError {
 }
 
 
-func importEvents(url: URL) -> [Event] {
+struct ImportResult {
     var events: [Event] = []
+    var videos: [VideoRecording] = []
+}
+
+func importEvents(url: URL) async -> ImportResult {
+    var result = ImportResult()
     let fileManager = FileManager.default
 
     do {
@@ -46,73 +52,100 @@ func importEvents(url: URL) -> [Event] {
                 continue
             }
 
-            if let event = importEvent(eventURL: eventURL, eventDirectory: eventDirectory) {
-                events.append(event)
+            if let (event, videos) = await importEvent(eventURL: eventURL, eventDirectory: eventDirectory) {
+                result.events.append(event)
+                result.videos.append(contentsOf: videos)
             }
-
         }
     } catch {
         print("error \(error)")
     }
-    return events
+    return result
 }
 
-func importEvent(eventURL: URL, eventDirectory: URL) -> Event? {
+func importEvent(eventURL: URL, eventDirectory: URL) async -> (event: Event, videos: [VideoRecording])? {
     do {
         let fileManager = FileManager.default
         let data = try Data(contentsOf: eventURL)
-        if let jsonDict = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any] {
-            
-            let camera = jsonDict["camera"] as? String
-            let city = jsonDict["city"] as? String
-            let estLatitude = jsonDict["est_lat"] as? String
-            let estLongitude = jsonDict["est_lon"] as? String
-            let reason = jsonDict["reason"] as? String
-            let timestampString = jsonDict["timestamp"] as? String
-            
-            let df = DateFormatter()
-            df.locale = Locale(identifier: "en_US_POSIX")
-            //df.timeZone = timeZone
-            df.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
-            let timestamp = df.date(from: timestampString!)
-
-            let sentryEvent = Event(source: "Tesla",
-                                    camera: camera!,
-                                    city: city!,
-                                    estLatitude: estLatitude!,
-                                    estLongitude: estLongitude!,
-                                    reason: reason!,
-                                    timestamp: timestamp!)
-            
-            let videoURLs = try fileManager.contentsOfDirectory(
-                at: eventDirectory,
-                includingPropertiesForKeys: nil,
-                options: []
-            )
-            var videos: [VideoRecording] = []
-            for file in videoURLs {
-                if file.pathExtension != "mp4" {
-                    //Skip files that are not mp4
-                    continue
-                }
-                
-                let (startTime, cameraName) = parseFilename(file.lastPathComponent)
-                if startTime == nil {
-                    continue
-                }
-                let endTime = Date(timeIntervalSince1970: TimeInterval(startTime!.timeIntervalSince1970) + 60)
-                
-                let bookmarkData = try! file.bookmarkData(options: .withSecurityScope)
-                videos.append(VideoRecording(url: file, bookmark: bookmarkData, camera: cameraName, startTime: startTime!, endTime: endTime))
-            }
-            sentryEvent.videos = videos
-            return sentryEvent
-
+        guard let jsonDict = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any] else {
+            return nil
         }
-    } catch {
-    }
-    return nil
 
+        guard let camera = jsonDict["camera"] as? String,
+              let city = jsonDict["city"] as? String,
+              let estLatitude = jsonDict["est_lat"] as? String,
+              let estLongitude = jsonDict["est_lon"] as? String,
+              let reason = jsonDict["reason"] as? String,
+              let timestampString = jsonDict["timestamp"] as? String else {
+            return nil
+        }
+
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "en_US_POSIX")
+        df.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        guard let timestamp = df.date(from: timestampString) else {
+            return nil
+        }
+
+        let sentryEvent = Event(source: "Tesla",
+                                camera: camera,
+                                city: city,
+                                estLatitude: estLatitude,
+                                estLongitude: estLongitude,
+                                reason: reason,
+                                timestamp: timestamp)
+
+        let videoURLs = try fileManager.contentsOfDirectory(
+            at: eventDirectory,
+            includingPropertiesForKeys: nil,
+            options: []
+        )
+        var videos: [VideoRecording] = []
+        for file in videoURLs {
+            if file.pathExtension != "mp4" {
+                //Skip files that are not mp4
+                continue
+            }
+
+            let (parsedStart, cameraName) = parseFilename(file.lastPathComponent)
+            guard let startTime = parsedStart else {
+                continue
+            }
+
+            // Read real duration from the asset instead of assuming 60s.
+            let durationSeconds = await videoDurationSeconds(url: file) ?? 60
+            let endTime = startTime.addingTimeInterval(durationSeconds)
+
+            let bookmarkData: Data
+            do {
+                #if os(iOS)
+                    bookmarkData = try file.bookmarkData()
+                #else
+                    bookmarkData = try file.bookmarkData(options: .withSecurityScope)
+                #endif
+            } catch {
+                print("Bookmark creation failed for \(file.lastPathComponent): \(error)")
+                continue
+            }
+
+            videos.append(VideoRecording(url: file, bookmark: bookmarkData, camera: cameraName, startTime: startTime, endTime: endTime))
+        }
+        return (sentryEvent, videos)
+    } catch {
+        print("importEvent error: \(error)")
+        return nil
+    }
+}
+
+private func videoDurationSeconds(url: URL) async -> TimeInterval? {
+    let asset = AVURLAsset(url: url)
+    do {
+        let duration = try await asset.load(.duration)
+        let seconds = CMTimeGetSeconds(duration)
+        return seconds.isFinite && seconds > 0 ? seconds : nil
+    } catch {
+        return nil
+    }
 }
 
 func parseFilename(_ filename: String, timeZone: TimeZone = .current) -> (date: Date?, cameraID: String) {
