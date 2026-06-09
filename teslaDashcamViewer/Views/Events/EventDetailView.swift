@@ -26,34 +26,36 @@ struct EventDetailView: View {
     }
 
     var body: some View {
+        let _ = Self._printChanges()
         ScrollView {
-            HStack(alignment: .top, spacing: 0) {
-                Spacer(minLength: 0)
-                VStack(alignment: .leading, spacing: 16) {
-                    header
+            VStack(alignment: .leading, spacing: 16) {
+                header
 
-                    if !matchedVideos.isEmpty {
-                        SyncedMultiCamPlayerView(videos: matchedVideos)
-                    } else {
-                        ContentUnavailableView(
-                            "No matching clips",
-                            systemImage: "play.slash",
-                            description: Text("No imported videos overlap this event's timestamp.")
-                        )
-                        .frame(height: 220)
-                        .liquidGlassCard(cornerRadius: 14)
-                    }
-
-                    summarySection
-                    metadataSection
-                    notesSection
+                if !matchedVideos.isEmpty {
+                    SyncedMultiCamPlayerView(videos: matchedVideos)
+                } else {
+                    ContentUnavailableView(
+                        "No matching clips",
+                        systemImage: "play.slash",
+                        description: Text("No imported videos overlap this event's timestamp (\(event.timestamp.formatted())).")
+                    )
+                    .frame(height: 220)
+                    .liquidGlassCard(cornerRadius: 14)
                 }
-                .frame(maxWidth: 1100)
-                Spacer(minLength: 0)
+
+                summarySection
+                metadataSection
+                notesSection
             }
             .padding(20)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .onAppear {
+                print("EventDetailView: event.timestamp=\(event.timestamp), matchedVideos.count=\(matchedVideos.count)")
+                for v in matchedVideos {
+                    print("  - cam=\(v.camera) start=\(v.startTime) end=\(v.endTime) path=\(v.url.lastPathComponent)")
+                }
+            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .navigationTitle(event.timestamp.formatted(date: .abbreviated, time: .shortened))
         #if os(macOS)
         .navigationSubtitle(TeslaCamera.displayName(for: event.camera))
@@ -80,7 +82,7 @@ struct EventDetailView: View {
     private var header: some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 6) {
-                Text(event.reason.isEmpty ? "Sentry event" : event.reason)
+                Text(event.reason.isEmpty ? "Sentry event" : EventSummarizer.humanizeReason(event.reason))
                     .font(.title3.bold())
                     .lineLimit(2)
                 HStack(spacing: 6) {
@@ -135,6 +137,9 @@ struct EventDetailView: View {
                 }
                 row("Latitude", value: event.estLatitude)
                 row("Longitude", value: event.estLongitude)
+                if !event.reason.isEmpty {
+                    row("Trigger", value: EventSummarizer.humanizeReason(event.reason))
+                }
                 if event.tag != "unknown" { row("Behavior", value: event.tag.capitalized) }
                 if event.interestingnessScore > 0 {
                     row("Score", value: String(format: "%.0f", event.interestingnessScore * 100))

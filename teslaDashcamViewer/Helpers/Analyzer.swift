@@ -81,24 +81,36 @@ func classifyEventTag(_ s: DetectionSummary) -> EventTag {
     return .unknown
 }
 
-/// Tesla dashcam camera IDs from event.json filenames.
-/// ["0"] = Front, ["3"] = Left repeater, ["4"] = Right repeater, ["5"] = Rear.
+/// Tesla dashcam camera IDs. Supports both the legacy numeric IDs (0/3/4/5)
+/// and the modern string names emitted by current firmware
+/// (front / left_repeater / right_repeater / back).
 enum TeslaCamera {
+    /// Canonical camera ID used everywhere in the UI.
+    static func canonical(_ raw: String) -> String {
+        switch raw.lowercased() {
+        case "0", "front":                      return "front"
+        case "3", "left", "left_repeater":      return "left_repeater"
+        case "4", "right", "right_repeater":    return "right_repeater"
+        case "5", "back", "rear":               return "back"
+        default:                                 return raw.lowercased()
+        }
+    }
+
     static func verticalFOVDegrees(for cameraID: String) -> Double {
-        switch cameraID {
-        case "0": return 50.0   // Front main (narrower)
-        case "3", "4": return 75.0  // Side repeaters
-        case "5": return 75.0   // Rear
+        switch canonical(cameraID) {
+        case "front": return 50.0
+        case "left_repeater", "right_repeater": return 75.0
+        case "back": return 75.0
         default: return 60.0
         }
     }
 
     static func displayName(for cameraID: String) -> String {
-        switch cameraID {
-        case "0": return "Front"
-        case "3": return "Left"
-        case "4": return "Right"
-        case "5": return "Rear"
+        switch canonical(cameraID) {
+        case "front": return "Front"
+        case "left_repeater": return "Left"
+        case "right_repeater": return "Right"
+        case "back": return "Rear"
         default: return cameraID
         }
     }

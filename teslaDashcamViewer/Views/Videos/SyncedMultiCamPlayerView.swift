@@ -30,11 +30,26 @@ struct SyncedMultiCamPlayerView: View {
     @State private var isScrubbing: Bool = false
     @State private var isExporting: Bool = false
 
-    private let cameraOrder: [String] = ["0", "3", "4", "5"]
+    /// Canonical display order. Only cameras that exist in `videos` are shown.
+    private let preferredCameraOrder: [String] = ["front", "left_repeater", "right_repeater", "back"]
+
+    private var orderedCameras: [String] {
+        let present = Array(Set(videos.map { TeslaCamera.canonical($0.camera) }))
+        var ordered = preferredCameraOrder.filter { present.contains($0) }
+        // Append anything unknown at the end so we never silently hide a clip.
+        for cam in present where !preferredCameraOrder.contains(cam) {
+            ordered.append(cam)
+        }
+        return ordered
+    }
 
     var body: some View {
         VStack(spacing: 8) {
-            grid
+            ZStack(alignment: .top) {
+                grid
+                wallClockBadge
+                    .padding(.top, 10)
+            }
 
             keyboardShortcutLayer
 
@@ -72,7 +87,7 @@ struct SyncedMultiCamPlayerView: View {
                 }
 
                 Text(timeString(positionSeconds) + " / " + timeString(totalDuration))
-                    .font(.caption.monospacedDigit())
+                    .font(.callout.monospacedDigit())
                     .foregroundStyle(.secondary)
 
                 #if os(macOS)
@@ -100,16 +115,19 @@ struct SyncedMultiCamPlayerView: View {
     }
 
     private var grid: some View {
-        let columns = [GridItem(.flexible()), GridItem(.flexible())]
+        let columns = [GridItem(.flexible(), spacing: 4), GridItem(.flexible(), spacing: 4)]
         return LazyVGrid(columns: columns, spacing: 4) {
-            ForEach(cameraOrder, id: \.self) { camID in
+            ForEach(orderedCameras, id: \.self) { camID in
                 ZStack(alignment: .topLeading) {
                     if let player = players[camID] {
                         VideoPlayer(player: player)
-                            .aspectRatio(16/9, contentMode: .fit)
+                            // Tesla cameras output 4:3. Letting hit-testing through
+                            // lets the parent ScrollView still receive scroll events.
+                            .aspectRatio(4.0/3.0, contentMode: .fit)
+                            .allowsHitTesting(false)
                     } else {
                         Color.black
-                            .aspectRatio(16/9, contentMode: .fit)
+                            .aspectRatio(4.0/3.0, contentMode: .fit)
                             .overlay(
                                 Text("No \(TeslaCamera.displayName(for: camID)) feed")
                                     .foregroundStyle(.secondary)
@@ -118,10 +136,13 @@ struct SyncedMultiCamPlayerView: View {
                     }
                     Text(TeslaCamera.displayName(for: camID))
                         .font(.caption.bold())
-                        .padding(4)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
                         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 4))
                         .padding(6)
                 }
+                .background(Color.black)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
             }
         }
     }
@@ -132,7 +153,10 @@ struct SyncedMultiCamPlayerView: View {
 
     private func setupPlayers() {
         tearDown()
-        guard !videos.isEmpty else { return }
+        guard !videos.isEmpty else {
+            print("SyncedMultiCamPlayerView: no matched videos")
+            return
+        }
 
         // Anchor = earliest start time across cameras.
         let earliest = videos.map(\.startTime).min() ?? Date()
@@ -145,17 +169,26 @@ struct SyncedMultiCamPlayerView: View {
         var maxEnd: Double = 0
 
         for video in videos {
-            guard let url = resolveBookmark(bookmarkData: video.bookmark) else { continue }
-            _ = url.startAccessingSecurityScopedResource()
+            let camKey = TeslaCamera.canonical(video.camera)
+            // De-duplicate: if we already created a player for this canonical camera, skip.
+            if newPlayers[camKey] != nil { continue }
+
+            guard let url = resolveBookmark(bookmarkData: video.bookmark) else {
+                print("SyncedMultiCamPlayerView: failed to resolve bookmark for camera \(camKey)")
+                continue
+            }
+            let didAccess = url.startAccessingSecurityScopedResource()
+            print("SyncedMultiCamPlayerView: cam=\(camKey) didAccess=\(didAccess) url=\(url.lastPathComponent)")
+
             let item = AVPlayerItem(url: url)
             let player = AVPlayer(playerItem: item)
             player.actionAtItemEnd = .pause
-            newPlayers[video.camera] = player
-            newURLs[video.camera] = url
+            newPlayers[camKey] = player
+            newURLs[camKey] = url
             let offset = video.startTime.timeIntervalSince(earliest)
-            newOffsets[video.camera] = offset
+            newOffsets[camKey] = offset
             let duration = video.endTime.timeIntervalSince(video.startTime)
-            newDurations[video.camera] = duration
+            newDurations[camKey] = duration
             maxEnd = max(maxEnd, offset + duration)
         }
 
@@ -167,7 +200,7 @@ struct SyncedMultiCamPlayerView: View {
         positionSeconds = 0
 
         // Pick a primary camera to drive time updates (prefer Front).
-        primaryCamera = cameraOrder.first(where: { players[$0] != nil }) ?? (players.keys.first ?? "")
+        primaryCamera = preferredCameraOrder.first(where: { players[$0] != nil }) ?? (players.keys.first ?? "")
         attachPrimaryTimeObserver()
 
         seekAll(to: 0)
@@ -270,6 +303,28 @@ struct SyncedMultiCamPlayerView: View {
     private func timeString(_ s: Double) -> String {
         let total = Int(s.rounded())
         return String(format: "%d:%02d", total / 60, total % 60)
+    }
+
+    /// Wall-clock timestamp showing the real moment captured by the videos
+    /// (anchor + current playback position).
+    private var wallClockBadge: some View {
+        let now = anchor.addingTimeInterval(positionSeconds)
+        let dateString = now.formatted(date: .abbreviated, time: .omitted)
+        let timeStringValue = now.formatted(date: .omitted, time: .standard)
+        return VStack(spacing: 0) {
+            Text(timeStringValue)
+                .font(.system(size: 26, weight: .semibold, design: .monospaced))
+            Text(dateString)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8).stroke(.white.opacity(0.2), lineWidth: 0.5)
+        )
+        .allowsHitTesting(false)
     }
 
     private struct EventMarker: Hashable {

@@ -11,28 +11,23 @@ import SwiftData
 struct MainView: View {
     var body: some View {
         TabView {
-            TabSection("Events") {
-                Tab("Events", systemImage: "list.bullet") {
-                    EventsListView()
+            EventsListView()
+                .tabItem {
+                    Label("Events", systemImage: "list.bullet")
                 }
-                Tab("Map", systemImage: "map.fill") {
-                    EventsMapView()
+            EventsMapView()
+                .tabItem {
+                    Label("Map", systemImage: "map.fill")
                 }
-            }
-            TabSection("Videos") {
-                Tab("Videos", systemImage: "play.rectangle.fill") {
-                    VideoListView(eventTime: nil)
+            VideoListView(eventTime: nil)
+                .tabItem {
+                    Label("Videos", systemImage: "play.rectangle.fill")
                 }
-            }
-            TabSection("Settings") {
-                Tab("Settings", systemImage: "gearshape.fill") {
-                    SettingsView()
+            SettingsView()
+                .tabItem {
+                    Label("Settings", systemImage: "gearshape.fill")
                 }
-            }
         }
-        #if os(iOS)
-        .tabViewStyle(.sidebarAdaptable)
-        #endif
     }
 }
 

@@ -180,24 +180,60 @@ struct EventsListView: View {
     private func handleImport(result: Result<URL, Error>) {
         switch result {
         case .success(let url):
-            Task {
+            Task { @MainActor in
                 let didAccess = url.startAccessingSecurityScopedResource()
                 defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
 
                 let imported = await importEvents(url: url)
-                await MainActor.run {
-                    for event in imported.events { modelContext.insert(event) }
-                    for video in imported.videos { modelContext.insert(video) }
-                    do {
-                        try modelContext.save()
-                    } catch {
-                        print("modelContext.save failed: \(error)")
+
+                // Build dedupe sets from current store contents.
+                let existingVideoPaths: Set<String> = {
+                    let descriptor = FetchDescriptor<VideoRecording>()
+                    let existing = (try? modelContext.fetch(descriptor)) ?? []
+                    return Set(existing.map { $0.url.path })
+                }()
+                let existingEventKeys: Set<String> = {
+                    let descriptor = FetchDescriptor<Event>()
+                    let existing = (try? modelContext.fetch(descriptor)) ?? []
+                    return Set(existing.map(eventKey))
+                }()
+
+                var insertedEvents = 0
+                var insertedVideos = 0
+                var skippedEvents = 0
+                var skippedVideos = 0
+
+                for event in imported.events {
+                    if existingEventKeys.contains(eventKey(event)) {
+                        skippedEvents += 1
+                        continue
                     }
+                    modelContext.insert(event)
+                    insertedEvents += 1
                 }
+                for video in imported.videos {
+                    if existingVideoPaths.contains(video.url.path) {
+                        skippedVideos += 1
+                        continue
+                    }
+                    modelContext.insert(video)
+                    insertedVideos += 1
+                }
+
+                do {
+                    try modelContext.save()
+                } catch {
+                    print("modelContext.save failed: \(error)")
+                }
+                print("Import: events +\(insertedEvents)/-\(skippedEvents), videos +\(insertedVideos)/-\(skippedVideos)")
             }
         case .failure:
             print("nothing was selected")
         }
+    }
+
+    private func eventKey(_ event: Event) -> String {
+        "\(event.source)|\(event.camera)|\(Int(event.timestamp.timeIntervalSince1970))"
     }
 }
 

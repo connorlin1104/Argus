@@ -38,13 +38,30 @@ enum EventSummarizer {
                 return deterministicSummary(facts: factsBlock)
             }
             let instructions = """
-            You are an assistant that writes short, factual descriptions of Tesla \
-            Sentry Mode events. Use 1-2 plain sentences. Don't speculate. Never invent \
-            details that are not in the facts.
+            You analyze Tesla Sentry Mode dashcam events and write clear, useful summaries \
+            for the vehicle owner. You receive structured facts gathered from on-device \
+            computer vision and the Tesla event metadata.
+
+            Write 3 to 5 sentences. Cover:
+            1. What happened, in plain language — who or what is in the scene, where on \
+               or around the car the activity took place, and how the encounter unfolded.
+            2. Severity: was this likely a casual passerby, suspicious lingering, deliberate \
+               approach, contact with the car, or vehicle-only activity?
+            3. Any concrete signals to follow up on (close approach distances, sustained \
+               presence, license plates spotted, which cameras saw the action).
+
+            Rules:
+            - Only use the facts provided. Do not invent license plates, times, or people.
+            - Refer to cameras by name (Front, Rear, Left, Right).
+            - Convert presence durations and distances into natural phrases (e.g. \
+              "lingered for about 12 seconds", "came within roughly 1.8 meters").
+            - If a field is missing, just omit it; do not write "unknown" or "N/A".
+            - Plain prose, no bullet lists, no markdown.
             """
             let session = LanguageModelSession(instructions: instructions)
             do {
-                let response = try await session.respond(to: "Summarize this Sentry event:\n\(factsBlock)")
+                let prompt = "Here are the facts for this Sentry event. Write the summary now.\n\n\(factsBlock)"
+                let response = try await session.respond(to: prompt)
                 let text = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
                 return text.isEmpty ? deterministicSummary(facts: factsBlock) : text
             } catch {
@@ -61,22 +78,61 @@ enum EventSummarizer {
     private static func buildFacts(event: Event, detection: DetectionSummary?) -> String {
         var lines: [String] = []
         lines.append("- timestamp: \(event.timestamp.formatted(date: .abbreviated, time: .standard))")
-        lines.append("- camera: \(TeslaCamera.displayName(for: event.camera))")
+        lines.append("- triggering camera: \(TeslaCamera.displayName(for: event.camera))")
         if !event.city.isEmpty { lines.append("- city: \(event.city)") }
-        if !event.reason.isEmpty { lines.append("- reason: \(event.reason)") }
-        if event.tag != "unknown" { lines.append("- behavior: \(event.tag)") }
+        if !event.address.isEmpty { lines.append("- address: \(event.address)") }
+        if !event.zone.isEmpty { lines.append("- zone: \(event.zone)") }
+        if !event.reason.isEmpty {
+            lines.append("- trigger reason: \(humanizeReason(event.reason))")
+        }
+        if event.tag != "unknown" {
+            lines.append("- automatic behavior tag: \(event.tag)")
+        }
         if let d = detection {
-            lines.append("- humans observed: \(d.humanCount)")
+            lines.append("- detected people frames: \(d.humanCount)")
             if let close = d.closestHumanMeters {
-                lines.append(String(format: "- closest approach: %.1f m", close))
+                lines.append(String(format: "- closest human approach: %.1f m", close))
             }
             if d.humanPresenceSeconds > 0 {
-                lines.append(String(format: "- presence: %.1f s", d.humanPresenceSeconds))
+                lines.append(String(format: "- continuous human presence: %.1f s", d.humanPresenceSeconds))
             }
-            if d.vehicleCount > 0 { lines.append("- vehicles observed: \(d.vehicleCount)") }
-            if let plate = d.firstPlateText { lines.append("- plate seen: \(plate)") }
+            if d.meanHumanMotion > 0 {
+                lines.append(String(format: "- average bbox motion (0-1): %.3f", d.meanHumanMotion))
+            }
+            if d.vehicleCount > 0 {
+                lines.append("- frames containing other vehicles: \(d.vehicleCount)")
+            }
+            if d.plateCount > 0 {
+                lines.append("- license plate readings: \(d.plateCount)")
+            }
+            if let plate = d.firstPlateText {
+                lines.append("- first plate text observed: \(plate)")
+            }
         }
         return lines.joined(separator: "\n")
+    }
+
+    /// Map raw Tesla reason codes to human-readable phrases.
+    static func humanizeReason(_ raw: String) -> String {
+        switch raw {
+        case "sentry_aware_object_detection":
+            return "Sentry detected a nearby object/person"
+        case "user_interaction_dashcam_panic_save":
+            return "Driver pressed the panic save button"
+        case "user_interaction_dashcam_launcher_action_on":
+            return "Driver enabled dashcam recording"
+        case "user_interaction_honk":
+            return "Driver honked"
+        case "user_interaction_drive":
+            return "Driver was driving"
+        default:
+            // Otherwise turn snake_case into Title Case prose.
+            if raw.contains("_") {
+                let words = raw.replacingOccurrences(of: "_", with: " ")
+                return words.prefix(1).uppercased() + words.dropFirst()
+            }
+            return raw
+        }
     }
 
     private static func deterministicSummary(facts: String) -> String {
