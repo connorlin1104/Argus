@@ -31,65 +31,6 @@ extension SyncedMultiCamPlayerView {
         }
     }
 
-    // MARK: - Camera sidebar
-
-    /// UI: vertical column of camera buttons shown next to the focused tile.
-    /// TEXT: button labels come from TeslaCamera.displayName().
-    func cameraButtonColumn(active: String) -> some View {
-        VStack(spacing: 6) {
-            ForEach(orderedCameras, id: \.self) { camID in
-                let name = TeslaCamera.displayName(for: camID)
-                let label = name.isEmpty ? camID.capitalized : name
-                // BUTTON: switch focused camera
-                Button {
-                    withAnimation(.easeInOut(duration: 0.25)) {
-                        focusedCamera = camID
-                    }
-                } label: {
-                    cameraButtonLabel(label: label, isActive: active == camID)
-                }
-                .buttonStyle(.plain)
-            }
-            // BUTTON: exit focus mode back to the 2x2 grid
-            Button {
-                withAnimation(.easeInOut(duration: 0.25)) {
-                    focusedCamera = nil
-                }
-            } label: {
-                Label("Grid", systemImage: "rectangle.split.2x2.fill") // TEXT/ICON
-                    .font(.callout.weight(.semibold))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.gray.opacity(0.15)) // COLOR: idle button bg
-                    )
-            }
-            .buttonStyle(.plain)
-            Spacer(minLength: 0)
-        }
-    }
-
-    /// Sidebar button visual — broken out so all camera buttons share one source of truth.
-    @ViewBuilder
-    private func cameraButtonLabel(label: String, isActive: Bool) -> some View {
-        Text(label)
-            .font(.callout.weight(.semibold))   // FONT: sidebar button text
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 10)             // LAYOUT: vertical button padding
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    // COLOR: active vs. idle background fill
-                    .fill(isActive ? Color.accentColor.opacity(0.25) : Color.gray.opacity(0.15))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    // COLOR: active outline ring
-                    .stroke(isActive ? Color.accentColor : Color.clear, lineWidth: 1.5)
-            )
-            .foregroundStyle(isActive ? Color.accentColor : .primary)
-    }
-
     // MARK: - Single tile
 
     /// One camera tile. When `showsExitButton` is true, overlays a button

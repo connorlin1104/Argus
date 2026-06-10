@@ -21,6 +21,9 @@ import SwiftData
 
 struct SyncedMultiCamPlayerView: View {
     let videos: [VideoRecording]
+    /// LAYOUT: Focused camera is owned by the parent so the camera-select
+    /// buttons can live outside the player (e.g. in EventDetailView's left column).
+    @Binding var focusedCamera: String?
 
     // === Playback state (shared with the +Playback / +Controls / +Export extensions) ===
     // NOTE: these are intentionally `internal` (no `private`) so the sibling
@@ -37,7 +40,6 @@ struct SyncedMultiCamPlayerView: View {
     @State var primaryCamera: String = ""
     @State var isScrubbing: Bool = false
     @State var isExporting: Bool = false
-    @State var focusedCamera: String? = nil
 
     /// LAYOUT: Canonical camera display order. Only cameras present in `videos` show up.
     let preferredCameraOrder: [String] = ["front", "left_repeater", "right_repeater", "back"]
@@ -49,9 +51,6 @@ struct SyncedMultiCamPlayerView: View {
     /// because the grid's 4-pt inter-tile spacing makes the 2x2 layout feel a touch
     /// wider than a single tile at the same cap.
     let focusTileMaxWidth: CGFloat = 1052
-    /// LAYOUT: Width of the camera-button column. Sits OUTSIDE the player's maxWidth so
-    /// the focused tile isn't shrunk to make room — intentionally asymmetric.
-    let cameraSidebarWidth: CGFloat = 110
 
     /// Cameras to render, in display order, deduped.
     var orderedCameras: [String] {
@@ -73,32 +72,37 @@ struct SyncedMultiCamPlayerView: View {
 
     // MARK: - Body
 
+    /// Width the video + timeline should occupy. Focus mode uses the slightly
+    /// wider focusTileMaxWidth; grid mode uses playerMaxWidth.
+    var currentPlayerWidth: CGFloat {
+        focusedCamera != nil ? focusTileMaxWidth : playerMaxWidth
+    }
+
     var body: some View {
         VStack(spacing: 8) {
             // UI: floating wall-clock badge above the grid
             wallClockBadge
                 .padding(.top, -12)
 
-            // UI: main player area — either 2x2 grid or focus mode with sidebar
-            HStack(alignment: .top, spacing: 20) {
-                if let focused = focusedCamera {
-                    Spacer().frame(width: cameraSidebarWidth)
-                    tile(camID: focused, showsExitButton: false)
-                        .frame(maxWidth: focusTileMaxWidth)
-                    cameraButtonColumn(active: focused)
-                        .frame(width: cameraSidebarWidth)
-                } else {
-                    grid
-                        .frame(maxWidth: playerMaxWidth)
-                }
+            // UI: main player area — 2x2 grid or focused single tile.
+            // Camera-select buttons now live OUTSIDE this view (see EventDetailView),
+            // so the tile/grid can hug the right edge cleanly.
+            if let focused = focusedCamera {
+                tile(camID: focused, showsExitButton: false)
+                    .frame(maxWidth: focusTileMaxWidth)
+            } else {
+                grid
+                    .frame(maxWidth: playerMaxWidth)
             }
-            .frame(maxWidth: .infinity)
 
             keyboardShortcutLayer
 
-            // UI: transport bar (play/pause + scrubber + time + export)
+            // UI: transport bar (play/pause + scrubber + time + export).
+            // Width-matched to the video above so the timeline lines up.
             controlBar
+                .frame(maxWidth: currentPlayerWidth)
         }
+        .frame(maxWidth: currentPlayerWidth)
         .task(id: videoFingerprint) {
             setupPlayers()
         }

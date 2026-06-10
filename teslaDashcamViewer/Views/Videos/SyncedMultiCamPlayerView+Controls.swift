@@ -99,11 +99,11 @@ extension SyncedMultiCamPlayerView {
             .disabled(isExporting)
             #endif
         }
-        // LAYOUT: transport bar inner padding
+        // LAYOUT: transport bar inner padding. No outer horizontal padding —
+        // the parent constrains width so this card matches the video feed above.
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .liquidGlassCard(cornerRadius: 14)
-        .padding(.horizontal)
     }
 
     // MARK: - Keyboard shortcuts

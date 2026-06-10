@@ -16,6 +16,9 @@ import SwiftData
 struct EventDetailView: View {
     @Bindable var event: Event
     @State private var isGenerating: Bool = false
+    /// LAYOUT: Owned here so the camera-select buttons in the left info column
+    /// can drive the player's focus mode.
+    @State private var focusedCamera: String? = nil
 
     /// Videos whose recording window covers this event's timestamp.
     @Query private var matchedVideos: [VideoRecording]
@@ -32,38 +35,41 @@ struct EventDetailView: View {
     }
 
     // === TUNING KNOBS ===
-    /// LAYOUT: Max width for the info cards (Details, Notes). Roughly matches
-    /// the video grid width so the whole column reads as one centered layout.
-    private let contentMaxWidth: CGFloat = 1050
-
-    /// LAYOUT: Width of the AI Summary card when it hangs in the left margin
-    /// next to the centered player. Wider => floats further into the centered
-    /// area on narrow windows; narrower => more breathing room for the video.
-    private let aiSummaryWingWidth: CGFloat = 260
+    /// LAYOUT: Max width of the right-hand player column. Matches the
+    /// SyncedMultiCamPlayerView's own playerMaxWidth so the timeline lines up.
+    private let playerColumnMaxWidth: CGFloat = 1052
+    /// LAYOUT: Minimum width of the left info column on small windows.
+    private let leftColumnMinWidth: CGFloat = 280
+    /// LAYOUT: Horizontal gap between the info column and the player column.
+    private let columnSpacing: CGFloat = 16
 
     private var hasHeader: Bool {
         !event.zone.isEmpty || event.tag != "unknown" || event.interestingnessScore > 0
     }
 
+    /// Canonical IDs of cameras actually present for this event's matched videos.
+    private var presentCameras: Set<String> {
+        Set(matchedVideos.map { TeslaCamera.canonical($0.camera) })
+    }
+
     // MARK: - Body
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 16) {
-                if hasHeader {
-                    headerChips
-                        .frame(maxWidth: contentMaxWidth)
-                }
+        // LAYOUT: two-column page. No outer scroll — info hugs the left, video hugs the right.
+        HStack(alignment: .top, spacing: columnSpacing) {
+            leftInfoColumn
+                .frame(minWidth: leftColumnMinWidth, maxWidth: .infinity, alignment: .topLeading)
+                // LAYOUT: pull the AI Summary card up so its top aligns with the
+                // wall-clock badge on the right (which sits ~12pt above its container).
+                .padding(.top, -10)
 
-                playerOrPlaceholder
-
-                EventMetadataSection(event: event).frame(maxWidth: contentMaxWidth)
-                EventNotesSection(event: event).frame(maxWidth: contentMaxWidth)
-            }
-            // LAYOUT: outer padding around the whole detail page
-            .padding(20)
-            .frame(maxWidth: .infinity)
+            rightPlayerColumn
+                .frame(maxWidth: playerColumnMaxWidth, alignment: .top)
+                .layoutPriority(1)
         }
+        // LAYOUT: outer padding around the whole detail page
+        .padding(20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear { logMatches() }
         .navigationTitle(event.timestamp.formatted(date: .abbreviated, time: .shortened))
         #if os(macOS)
@@ -75,22 +81,120 @@ struct EventDetailView: View {
         .toolbar { toolbarContent }
     }
 
-    // MARK: - Sub-views
+    // MARK: - Left info column
 
-    /// Either the synced multi-cam player with the floating AI-summary wing,
-    /// or a placeholder + standalone summary card if no clips were matched.
+    /// Left column: chips, AI summary, camera-select buttons, details, notes.
+    /// Replaces the content that used to sit below the player in the old vertical layout.
+    /// Notes expands to absorb any leftover vertical space so the column matches the player height.
     @ViewBuilder
-    private var playerOrPlaceholder: some View {
-        if !matchedVideos.isEmpty {
-            // UI: floats the AI summary into the player's left margin.
-            // LAYOUT: padding(.top, 40) clears the wall-clock badge.
-            SyncedMultiCamPlayerView(videos: matchedVideos)
-                .overlay(alignment: .topLeading) {
-                    EventSummarySection(event: event, isGenerating: $isGenerating)
-                        .frame(width: aiSummaryWingWidth)
-                        .padding(.leading, 12)
-                        .padding(.top, 40)
+    private var leftInfoColumn: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if hasHeader { headerChips }
+            EventSummarySection(event: event, isGenerating: $isGenerating)
+            cameraButtonsRows
+            EventMetadataSection(event: event)
+            EventNotesSection(event: event)
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
+    }
+
+    /// Camera-select buttons. Two rows: [Grid, Front, Rear] then [Left, Right].
+    /// Grid returns to the 2x2 view; the others switch focus to that camera.
+    @ViewBuilder
+    private var cameraButtonsRows: some View {
+        VStack(spacing: 6) {
+            // ROW 1: Grid · Front · Rear
+            HStack(spacing: 6) {
+                cameraSelectButton(
+                    label: "Grid",
+                    icon: "rectangle.split.2x2.fill",
+                    isActive: focusedCamera == nil,
+                    enabled: !matchedVideos.isEmpty
+                ) { focusedCamera = nil }
+
+                cameraSelectButton(
+                    label: "Front",
+                    icon: nil,
+                    isActive: focusedCamera == "front",
+                    enabled: presentCameras.contains("front")
+                ) { focusedCamera = "front" }
+
+                cameraSelectButton(
+                    label: "Rear",
+                    icon: nil,
+                    isActive: focusedCamera == "back",
+                    enabled: presentCameras.contains("back")
+                ) { focusedCamera = "back" }
+            }
+            // ROW 2: Left · Right
+            HStack(spacing: 6) {
+                cameraSelectButton(
+                    label: "Left",
+                    icon: nil,
+                    isActive: focusedCamera == "left_repeater",
+                    enabled: presentCameras.contains("left_repeater")
+                ) { focusedCamera = "left_repeater" }
+
+                cameraSelectButton(
+                    label: "Right",
+                    icon: nil,
+                    isActive: focusedCamera == "right_repeater",
+                    enabled: presentCameras.contains("right_repeater")
+                ) { focusedCamera = "right_repeater" }
+            }
+        }
+    }
+
+    /// One camera-select pill. Visual matches the prior in-player sidebar buttons.
+    private func cameraSelectButton(
+        label: String,
+        icon: String?,
+        isActive: Bool,
+        enabled: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.25)) { action() }
+        } label: {
+            Group {
+                if let icon {
+                    Label(label, systemImage: icon)
+                } else {
+                    Text(label)
                 }
+            }
+            .font(.callout.weight(.semibold))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    // COLOR: active vs. idle background fill
+                    .fill(isActive ? Color.accentColor.opacity(0.25) : Color.gray.opacity(0.15))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    // COLOR: active outline ring
+                    .stroke(isActive ? Color.accentColor : Color.clear, lineWidth: 1.5)
+            )
+            .foregroundStyle(isActive ? Color.accentColor : .primary)
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.4)
+    }
+
+    // MARK: - Right player column
+
+    /// Right column: wall-clock + video grid/focus tile + transport bar.
+    /// The player view aligns to the trailing edge of this column so it hugs the right.
+    @ViewBuilder
+    private var rightPlayerColumn: some View {
+        if !matchedVideos.isEmpty {
+            SyncedMultiCamPlayerView(
+                videos: matchedVideos,
+                focusedCamera: $focusedCamera
+            )
+            .frame(maxWidth: .infinity, alignment: .trailing)
         } else {
             // TEXT: shown when no clip overlaps this event's timestamp
             ContentUnavailableView(
@@ -100,14 +204,11 @@ struct EventDetailView: View {
             )
             .frame(height: 220)
             .liquidGlassCard(cornerRadius: 14)
-            .frame(maxWidth: contentMaxWidth)
-
-            EventSummarySection(event: event, isGenerating: $isGenerating)
-                .frame(maxWidth: contentMaxWidth)
+            .frame(maxWidth: .infinity, alignment: .trailing)
         }
     }
 
-    /// Compact row of zone/tag/score chips above the player.
+    /// Compact row of zone/tag/score chips at the top of the info column.
     private var headerChips: some View {
         // UI: header chip row
         HStack(spacing: 6) {
