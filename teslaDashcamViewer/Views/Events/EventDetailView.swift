@@ -29,13 +29,30 @@ struct EventDetailView: View {
         !event.zone.isEmpty || event.tag != "unknown" || event.interestingnessScore > 0
     }
 
+    /// Max width for the info cards (Details, Notes) — roughly matches the video
+    /// grid width so the whole column reads as one centered layout.
+    private let contentMaxWidth: CGFloat = 1050
+    /// Width of the AI Summary card when it hangs in the left margin next to the
+    /// centered player. Wider => floats further into the centered area on narrow
+    /// windows; narrower => more breathing room for the video.
+    private let aiSummaryWingWidth: CGFloat = 260
+
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                if hasHeader { header }
+            VStack(spacing: 16) {
+                if hasHeader {
+                    header
+                        .frame(maxWidth: contentMaxWidth)
+                }
 
                 if !matchedVideos.isEmpty {
                     SyncedMultiCamPlayerView(videos: matchedVideos)
+                        .overlay(alignment: .topLeading) {
+                            summarySection
+                                .frame(width: aiSummaryWingWidth)
+                                .padding(.leading, 12)
+                                .padding(.top, 40) // skip past the wall-clock badge
+                        }
                 } else {
                     ContentUnavailableView(
                         "No matching clips",
@@ -44,14 +61,16 @@ struct EventDetailView: View {
                     )
                     .frame(height: 220)
                     .liquidGlassCard(cornerRadius: 14)
+                    .frame(maxWidth: contentMaxWidth)
+
+                    summarySection.frame(maxWidth: contentMaxWidth)
                 }
 
-                summarySection
-                metadataSection
-                notesSection
+                metadataSection.frame(maxWidth: contentMaxWidth)
+                notesSection.frame(maxWidth: contentMaxWidth)
             }
             .padding(20)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .frame(maxWidth: .infinity)
         }
         .onAppear {
             print("EventDetailView: event.timestamp=\(event.timestamp), matchedVideos.count=\(matchedVideos.count)")

@@ -29,9 +29,21 @@ struct SyncedMultiCamPlayerView: View {
     @State private var primaryCamera: String = ""
     @State private var isScrubbing: Bool = false
     @State private var isExporting: Bool = false
+    @State private var focusedCamera: String? = nil
 
     /// Canonical display order. Only cameras that exist in `videos` are shown.
     private let preferredCameraOrder: [String] = ["front", "left_repeater", "right_repeater", "back"]
+
+    // === TUNING KNOBS ===
+    /// Max width of the 2x2 grid.
+    private let playerMaxWidth: CGFloat = 1050
+    /// Max width of the focused tile. Slightly larger than `playerMaxWidth` because
+    /// the grid's 4-pt inter-tile spacing makes the 2x2 layout feel a touch wider
+    /// than a single tile at the same cap.
+    private let focusTileMaxWidth: CGFloat = 1052
+    /// Width of the camera-button column. Sits OUTSIDE the player's maxWidth so the
+    /// focused tile isn't shrunk to make room — the layout is intentionally asymmetric.
+    private let cameraSidebarWidth: CGFloat = 110
 
     private var orderedCameras: [String] {
         let present = Array(Set(videos.map { TeslaCamera.canonical($0.camera) }))
@@ -46,9 +58,21 @@ struct SyncedMultiCamPlayerView: View {
     var body: some View {
         VStack(spacing: 8) {
             wallClockBadge
-            grid
-                .frame(maxWidth: 1050)
-                .frame(maxWidth: .infinity)
+                .padding(.top, -12)
+            HStack(alignment: .top, spacing: 20) {
+                if let focused = focusedCamera {
+                    Spacer()
+                        .frame(width: cameraSidebarWidth)
+                    tile(camID: focused, showsExitButton: false)
+                        .frame(maxWidth: focusTileMaxWidth)
+                    cameraButtonColumn(active: focused)
+                        .frame(width: cameraSidebarWidth)
+                } else {
+                    grid
+                        .frame(maxWidth: playerMaxWidth)
+                }
+            }
+            .frame(maxWidth: .infinity)
 
             keyboardShortcutLayer
 
@@ -117,33 +141,115 @@ struct SyncedMultiCamPlayerView: View {
         let columns = [GridItem(.flexible(), spacing: 4), GridItem(.flexible(), spacing: 4)]
         return LazyVGrid(columns: columns, spacing: 4) {
             ForEach(orderedCameras, id: \.self) { camID in
-                let name = TeslaCamera.displayName(for: camID)
-                let label = name.isEmpty ? "Camera" : name
-                ZStack(alignment: .topLeading) {
-                    if let player = players[camID] {
-                        PlayerLayerView(player: player)
-                            .aspectRatio(4.0/3.0, contentMode: .fit)
-                            .allowsHitTesting(false)
-                    } else {
-                        Color.black
-                            .aspectRatio(4.0/3.0, contentMode: .fit)
-                            .overlay(
-                                Text("No \(label) feed")
-                                    .foregroundStyle(.secondary)
-                                    .font(.caption)
-                            )
+                tile(camID: camID, showsExitButton: false)
+                    .onTapGesture {
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            focusedCamera = camID
+                        }
                     }
-                    Text(label)
-                        .font(.caption.bold())
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 4))
-                        .padding(6)
-                }
-                .background(Color.black)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
             }
         }
+    }
+
+    private var focusLayout: some View {
+        let focused = focusedCamera ?? orderedCameras.first ?? ""
+        return HStack(alignment: .top, spacing: 8) {
+            tile(camID: focused, showsExitButton: false)
+                .layoutPriority(1)
+            // === ADJUST `cameraSidebarWidth` (top of file) to change focus tile size ===
+            cameraButtonColumn(active: focused)
+                .frame(width: cameraSidebarWidth)
+        }
+    }
+
+    private func cameraButtonColumn(active: String) -> some View {
+        VStack(spacing: 6) {
+            ForEach(orderedCameras, id: \.self) { camID in
+                let name = TeslaCamera.displayName(for: camID)
+                let label = name.isEmpty ? camID.capitalized : name
+                Button {
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                        focusedCamera = camID
+                    }
+                } label: {
+                    Text(label)
+                        .font(.callout.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(active == camID ? Color.accentColor.opacity(0.25) : Color.gray.opacity(0.15))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(active == camID ? Color.accentColor : Color.clear, lineWidth: 1.5)
+                        )
+                        .foregroundStyle(active == camID ? Color.accentColor : .primary)
+                }
+                .buttonStyle(.plain)
+            }
+            Button {
+                withAnimation(.easeInOut(duration: 0.25)) {
+                    focusedCamera = nil
+                }
+            } label: {
+                Label("Grid", systemImage: "rectangle.split.2x2.fill")
+                    .font(.callout.weight(.semibold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.gray.opacity(0.15))
+                    )
+            }
+            .buttonStyle(.plain)
+            Spacer(minLength: 0)
+        }
+    }
+
+    /// One camera tile. When `showsExitButton` is true, overlays a button
+    /// that returns to the 2x2 grid.
+    private func tile(camID: String, showsExitButton: Bool) -> some View {
+        let name = TeslaCamera.displayName(for: camID)
+        let label = name.isEmpty ? "Camera" : name
+        return ZStack(alignment: .topLeading) {
+            if let player = players[camID] {
+                PlayerLayerView(player: player)
+                    .aspectRatio(4.0/3.0, contentMode: .fit)
+                    .allowsHitTesting(false)
+            } else {
+                Color.black
+                    .aspectRatio(4.0/3.0, contentMode: .fit)
+                    .overlay(
+                        Text("No \(label) feed")
+                            .foregroundStyle(.secondary)
+                            .font(.caption)
+                    )
+            }
+            Text(label)
+                .font(.caption.bold())
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 4))
+                .padding(6)
+            if showsExitButton {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                        focusedCamera = nil
+                    }
+                } label: {
+                    Image(systemName: "rectangle.split.2x2.fill")
+                        .padding(6)
+                        .background(.thinMaterial, in: Circle())
+                }
+                .buttonStyle(.plain)
+                .padding(6)
+                .frame(maxWidth: .infinity, alignment: .topTrailing)
+                .help("Back to grid")
+            }
+        }
+        .background(Color.black)
+        .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
     private var videoFingerprint: String {
