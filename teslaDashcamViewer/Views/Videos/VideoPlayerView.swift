@@ -2,7 +2,9 @@
 //  VideoPlayerView.swift
 //  teslaDashcamViewer
 //
-//  Created by Connor Lin on 8/17/25.
+//  Thin wrapper around AVKit's `VideoPlayer` that manages security-scoped
+//  resource access for the URL it's given. Used inside PlayerSheet.
+//  Search keywords: UI:video-player, PLAYBACK:single
 //
 
 import SwiftUI
@@ -14,12 +16,14 @@ struct VideoPlayerView: View {
     @State private var didAccess: Bool = false
 
     var body: some View {
+        // UI: standard AVKit video player with default controls
         VideoPlayer(player: player)
             .onAppear {
                 didAccess = videoURL.startAccessingSecurityScopedResource()
-                
+
                 if didAccess {
                     player = AVPlayer(url: videoURL)
+                    // PLAYBACK: auto-play on appearance
                     player?.play()
                 } else {
                     // Handle error: access denied (e.g., log or show alert)

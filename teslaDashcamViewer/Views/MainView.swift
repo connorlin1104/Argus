@@ -2,7 +2,8 @@
 //  MainView.swift
 //  teslaDashcamViewer
 //
-//  Created by Connor Lin on 8/17/25.
+//  Top-level tab container: Events list, Map, Videos, Settings.
+//  Search keywords: UI:main-tabs, TEXT:tab-labels, ICON:tab-icons
 //
 
 import SwiftUI
@@ -10,6 +11,9 @@ import SwiftData
 
 struct MainView: View {
     var body: some View {
+        // UI: root TabView holding the four primary tabs.
+        // TEXT: change labels here to rename the tabs site-wide.
+        // ICON: change `systemImage` to swap the tab icons.
         TabView {
             EventsListView()
                 .tabItem {

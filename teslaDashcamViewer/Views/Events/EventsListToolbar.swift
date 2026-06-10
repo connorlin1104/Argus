@@ -1,0 +1,86 @@
+//
+//  EventsListToolbar.swift
+//  teslaDashcamViewer
+//
+//  Toolbar content + row context menu for EventsListView.
+//  Search keywords: UI:events-toolbar, BUTTON:events-toolbar
+//
+
+import SwiftUI
+import SwiftData
+
+/// Right-click menu on a row: favorite / archive / delete.
+struct EventRowContextMenu: View {
+    @Environment(\.modelContext) private var modelContext
+    let event: Event
+
+    var body: some View {
+        // BUTTON: favorite toggle (context menu)
+        Button {
+            event.isFavorite.toggle()
+        } label: {
+            Label(event.isFavorite ? "Unfavorite" : "Favorite",
+                  systemImage: event.isFavorite ? "star.slash" : "star")
+        }
+        // BUTTON: archive toggle (context menu)
+        Button {
+            event.isArchived.toggle()
+        } label: {
+            Label(event.isArchived ? "Unarchive" : "Archive",
+                  systemImage: event.isArchived ? "tray.and.arrow.up" : "archivebox")
+        }
+        // BUTTON: delete (context menu)
+        Button(role: .destructive) {
+            modelContext.delete(event)
+        } label: {
+            Label("Delete", systemImage: "trash")
+        }
+    }
+}
+
+/// The "filter funnel" menu in the navigation bar.
+struct EventsFilterMenu: ToolbarContent {
+    @Binding var favoritesOnly: Bool
+    @Binding var showArchived: Bool
+    @Binding var tagFilter: String
+    @Binding var sortMode: EventsListView.SortMode
+
+    var body: some ToolbarContent {
+        // BUTTON: filter menu (funnel icon)
+        ToolbarItem {
+            Menu {
+                // TEXT: filter menu items
+                Toggle("Favorites only", isOn: $favoritesOnly)
+                Toggle("Show archived", isOn: $showArchived)
+                Picker("Tag", selection: $tagFilter) {
+                    Text("All").tag("all")
+                    // TEXT: tag options — keep in sync with TagChip switch
+                    ForEach(["touched", "lingered", "approached", "passing", "vehicle", "noise", "unknown"], id: \.self) { t in
+                        Text(t.capitalized).tag(t)
+                    }
+                }
+                Picker("Sort by", selection: $sortMode) {
+                    ForEach(EventsListView.SortMode.allCases) { Text($0.label).tag($0) }
+                }
+            } label: {
+                Label("Filter", systemImage: "line.3.horizontal.decrease.circle")
+            }
+        }
+    }
+}
+
+/// "Import" button used on both the empty state and the populated list.
+struct EventsImportToolbar: ToolbarContent {
+    @Binding var showImportView: Bool
+
+    var body: some ToolbarContent {
+        // BUTTON: import (top-right cloud-arrow icon)
+        ToolbarItem {
+            Button {
+                showImportView = true
+            } label: {
+                Label("Import", systemImage: "square.and.arrow.down")
+            }
+        }
+    }
+}

@@ -2,7 +2,12 @@
 //  EventDetailView.swift
 //  teslaDashcamViewer
 //
-//  Created by Connor Lin on 8/17/25.
+//  Top-level event detail screen. Composes the multi-cam player, AI summary,
+//  metadata card, and notes editor.
+//
+//  Sub-sections live in EventDetailSections.swift.
+//  Reusable card chrome lives in Views/Style/SectionCard.swift.
+//  Search keywords: UI:event-detail, LAYOUT:detail
 //
 
 import SwiftUI
@@ -12,6 +17,7 @@ struct EventDetailView: View {
     @Bindable var event: Event
     @State private var isGenerating: Bool = false
 
+    /// Videos whose recording window covers this event's timestamp.
     @Query private var matchedVideos: [VideoRecording]
 
     init(event: Event) {
@@ -25,59 +31,40 @@ struct EventDetailView: View {
         )
     }
 
+    // === TUNING KNOBS ===
+    /// LAYOUT: Max width for the info cards (Details, Notes). Roughly matches
+    /// the video grid width so the whole column reads as one centered layout.
+    private let contentMaxWidth: CGFloat = 1050
+
+    /// LAYOUT: Width of the AI Summary card when it hangs in the left margin
+    /// next to the centered player. Wider => floats further into the centered
+    /// area on narrow windows; narrower => more breathing room for the video.
+    private let aiSummaryWingWidth: CGFloat = 260
+
     private var hasHeader: Bool {
         !event.zone.isEmpty || event.tag != "unknown" || event.interestingnessScore > 0
     }
 
-    /// Max width for the info cards (Details, Notes) — roughly matches the video
-    /// grid width so the whole column reads as one centered layout.
-    private let contentMaxWidth: CGFloat = 1050
-    /// Width of the AI Summary card when it hangs in the left margin next to the
-    /// centered player. Wider => floats further into the centered area on narrow
-    /// windows; narrower => more breathing room for the video.
-    private let aiSummaryWingWidth: CGFloat = 260
+    // MARK: - Body
 
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
                 if hasHeader {
-                    header
+                    headerChips
                         .frame(maxWidth: contentMaxWidth)
                 }
 
-                if !matchedVideos.isEmpty {
-                    SyncedMultiCamPlayerView(videos: matchedVideos)
-                        .overlay(alignment: .topLeading) {
-                            summarySection
-                                .frame(width: aiSummaryWingWidth)
-                                .padding(.leading, 12)
-                                .padding(.top, 40) // skip past the wall-clock badge
-                        }
-                } else {
-                    ContentUnavailableView(
-                        "No matching clips",
-                        systemImage: "play.slash",
-                        description: Text("No imported videos overlap this event's timestamp (\(event.timestamp.formatted())).")
-                    )
-                    .frame(height: 220)
-                    .liquidGlassCard(cornerRadius: 14)
-                    .frame(maxWidth: contentMaxWidth)
+                playerOrPlaceholder
 
-                    summarySection.frame(maxWidth: contentMaxWidth)
-                }
-
-                metadataSection.frame(maxWidth: contentMaxWidth)
-                notesSection.frame(maxWidth: contentMaxWidth)
+                EventMetadataSection(event: event).frame(maxWidth: contentMaxWidth)
+                EventNotesSection(event: event).frame(maxWidth: contentMaxWidth)
             }
+            // LAYOUT: outer padding around the whole detail page
             .padding(20)
             .frame(maxWidth: .infinity)
         }
-        .onAppear {
-            print("EventDetailView: event.timestamp=\(event.timestamp), matchedVideos.count=\(matchedVideos.count)")
-            for v in matchedVideos {
-                print("  - cam=\(v.camera) start=\(v.startTime) end=\(v.endTime) path=\(v.url.lastPathComponent)")
-            }
-        }
+        .onAppear { logMatches() }
         .navigationTitle(event.timestamp.formatted(date: .abbreviated, time: .shortened))
         #if os(macOS)
         .navigationSubtitle({
@@ -85,26 +72,44 @@ struct EventDetailView: View {
             return n.isEmpty ? "" : n
         }())
         #endif
-        .toolbar {
-            ToolbarItem {
-                Button {
-                    event.isFavorite.toggle()
-                } label: {
-                    Image(systemName: event.isFavorite ? "star.fill" : "star")
-                        .foregroundStyle(event.isFavorite ? .yellow : .secondary)
+        .toolbar { toolbarContent }
+    }
+
+    // MARK: - Sub-views
+
+    /// Either the synced multi-cam player with the floating AI-summary wing,
+    /// or a placeholder + standalone summary card if no clips were matched.
+    @ViewBuilder
+    private var playerOrPlaceholder: some View {
+        if !matchedVideos.isEmpty {
+            // UI: floats the AI summary into the player's left margin.
+            // LAYOUT: padding(.top, 40) clears the wall-clock badge.
+            SyncedMultiCamPlayerView(videos: matchedVideos)
+                .overlay(alignment: .topLeading) {
+                    EventSummarySection(event: event, isGenerating: $isGenerating)
+                        .frame(width: aiSummaryWingWidth)
+                        .padding(.leading, 12)
+                        .padding(.top, 40)
                 }
-            }
-            ToolbarItem {
-                Button {
-                    event.isArchived.toggle()
-                } label: {
-                    Image(systemName: event.isArchived ? "tray.and.arrow.up" : "archivebox")
-                }
-            }
+        } else {
+            // TEXT: shown when no clip overlaps this event's timestamp
+            ContentUnavailableView(
+                "No matching clips",
+                systemImage: "play.slash",
+                description: Text("No imported videos overlap this event's timestamp (\(event.timestamp.formatted())).")
+            )
+            .frame(height: 220)
+            .liquidGlassCard(cornerRadius: 14)
+            .frame(maxWidth: contentMaxWidth)
+
+            EventSummarySection(event: event, isGenerating: $isGenerating)
+                .frame(maxWidth: contentMaxWidth)
         }
     }
 
-    private var header: some View {
+    /// Compact row of zone/tag/score chips above the player.
+    private var headerChips: some View {
+        // UI: header chip row
         HStack(spacing: 6) {
             if !event.zone.isEmpty { ZoneChip(zone: event.zone) }
             if event.tag != "unknown" { TagChip(tag: event.tag) }
@@ -113,113 +118,35 @@ struct EventDetailView: View {
         }
     }
 
-    private var summarySection: some View {
-        Section_Card(title: "AI Summary", symbol: "sparkles") {
-            VStack(alignment: .leading, spacing: 10) {
-                if event.summary.isEmpty {
-                    Text("No summary yet.").foregroundStyle(.secondary)
-                } else {
-                    Text(event.summary)
-                }
-                Button {
-                    Task { await generateSummary() }
-                } label: {
-                    if isGenerating {
-                        HStack { ProgressView().controlSize(.small); Text("Generating…") }
-                    } else {
-                        Text(event.summary.isEmpty ? "Generate summary" : "Regenerate")
-                    }
-                }
-                .disabled(isGenerating)
+    // MARK: - Toolbar
+
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        // BUTTON: favorite toggle (star)
+        ToolbarItem {
+            Button {
+                event.isFavorite.toggle()
+            } label: {
+                Image(systemName: event.isFavorite ? "star.fill" : "star")
+                    // COLOR: yellow when favorited, secondary otherwise
+                    .foregroundStyle(event.isFavorite ? .yellow : .secondary)
+            }
+        }
+        // BUTTON: archive toggle
+        ToolbarItem {
+            Button {
+                event.isArchived.toggle()
+            } label: {
+                Image(systemName: event.isArchived ? "tray.and.arrow.up" : "archivebox")
             }
         }
     }
 
-    private var metadataSection: some View {
-        Section_Card(title: "Details", symbol: "info.circle") {
-            VStack(spacing: 0) {
-                let camera = TeslaCamera.displayName(for: event.camera)
-                if !camera.isEmpty { row("Camera", value: camera) }
-                if !event.city.isEmpty { row("City", value: event.city) }
-                if event.address.isEmpty {
-                    HStack {
-                        Text("Address").foregroundStyle(.secondary)
-                        Spacer()
-                        Button("Look up") {
-                            Task { await lookupAddress() }
-                        }
-                        .buttonStyle(.borderless)
-                    }
-                    .padding(.vertical, 6)
-                } else {
-                    row("Address", value: event.address)
-                }
-                row("Latitude", value: event.estLatitude)
-                row("Longitude", value: event.estLongitude)
-                if !event.reason.isEmpty {
-                    row("Trigger", value: EventSummarizer.humanizeReason(event.reason))
-                }
-                if event.tag != "unknown" { row("Behavior", value: event.tag.capitalized) }
-                if event.interestingnessScore > 0 {
-                    row("Score", value: String(format: "%.0f", event.interestingnessScore * 100))
-                }
-            }
+    private func logMatches() {
+        print("EventDetailView: event.timestamp=\(event.timestamp), matchedVideos.count=\(matchedVideos.count)")
+        for v in matchedVideos {
+            print("  - cam=\(v.camera) start=\(v.startTime) end=\(v.endTime) path=\(v.url.lastPathComponent)")
         }
-    }
-
-    private func row(_ key: String, value: String) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(key).foregroundStyle(.secondary)
-            Spacer()
-            Text(value).multilineTextAlignment(.trailing)
-        }
-        .padding(.vertical, 6)
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(.separator).frame(height: 0.5)
-        }
-    }
-
-    private var notesSection: some View {
-        Section_Card(title: "Notes", symbol: "note.text") {
-            TextEditor(text: $event.notes)
-                .frame(minHeight: 90)
-                .padding(8)
-                .background(.background.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8).stroke(.separator, lineWidth: 0.5)
-                )
-        }
-    }
-
-    private func lookupAddress() async {
-        if let addr = await ReverseGeocoder.reverseGeocode(latString: event.estLatitude, lonString: event.estLongitude) {
-            event.address = addr
-        }
-    }
-
-    private func generateSummary() async {
-        isGenerating = true
-        defer { isGenerating = false }
-        let text = await EventSummarizer.summarize(event: event, detection: nil)
-        event.summary = text
-    }
-}
-
-private struct Section_Card<Content: View>: View {
-    let title: String
-    let symbol: String
-    @ViewBuilder var content: Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label(title, systemImage: symbol)
-                .font(.headline)
-                .foregroundStyle(.secondary)
-            content
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
-        .liquidGlassCard(cornerRadius: 14)
     }
 }
 

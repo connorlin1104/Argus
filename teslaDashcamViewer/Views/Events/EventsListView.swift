@@ -2,7 +2,17 @@
 //  EventsListView.swift
 //  teslaDashcamViewer
 //
-//  Created by Connor Lin on 8/17/25.
+//  The primary list of imported Sentry events. Handles search, filter, sort,
+//  import, and navigation into EventDetailView.
+//
+//  Sub-components:
+//   - EventRow              — single row in the list
+//   - EventChips            — ZoneChip / TagChip / ScoreBadge
+//   - EventsImport          — file-importer plumbing
+//   - EventsListToolbar     — filter / import toolbar items + row context menu
+//   - LiquidGlassStyle      — chip / card backgrounds
+//
+//  Search keywords: UI:events-list, TEXT:events-list, LAYOUT:events-list
 //
 
 import SwiftUI
@@ -10,11 +20,10 @@ import SwiftData
 
 struct EventsListView: View {
     @Environment(\.modelContext) private var modelContext
-    @Query(
-        sort: [
-            SortDescriptor(\Event.timestamp, order: .reverse)
-        ]
-    ) private var events: [Event]
+    @Query(sort: [SortDescriptor(\Event.timestamp, order: .reverse)])
+    private var events: [Event]
+
+    // === Filter / sort state ===
     @State private var showImportView: Bool = false
     @State private var searchText: String = ""
     @State private var tagFilter: String = "all"
@@ -22,6 +31,7 @@ struct EventsListView: View {
     @State private var favoritesOnly: Bool = false
     @State private var showArchived: Bool = false
 
+    /// TEXT: visible sort options in the filter menu.
     enum SortMode: String, CaseIterable, Identifiable {
         case newest, oldest, score
         var id: String { rawValue }
@@ -34,30 +44,16 @@ struct EventsListView: View {
         }
     }
 
+    // MARK: - Filter pipeline
+
+    /// Apply favorites/archive/tag/search/sort to the query results.
     var filteredEvents: [Event] {
         var result = events
-        if !showArchived {
-            result = result.filter { !$0.isArchived }
-        }
-        if favoritesOnly {
-            result = result.filter { $0.isFavorite }
-        }
-        if tagFilter != "all" {
-            result = result.filter { $0.tag == tagFilter }
-        }
-        if !searchText.isEmpty {
-            let q = searchText.lowercased()
-            result = result.filter { e in
-                e.city.lowercased().contains(q) ||
-                e.reason.lowercased().contains(q) ||
-                e.zone.lowercased().contains(q) ||
-                e.summary.lowercased().contains(q) ||
-                e.address.lowercased().contains(q) ||
-                e.tag.lowercased().contains(q) ||
-                e.camera.lowercased().contains(q) ||
-                e.notes.lowercased().contains(q)
-            }
-        }
+        if !showArchived       { result = result.filter { !$0.isArchived } }
+        if favoritesOnly       { result = result.filter { $0.isFavorite } }
+        if tagFilter != "all"  { result = result.filter { $0.tag == tagFilter } }
+        if !searchText.isEmpty { result = result.filter { matchesSearch($0) } }
+
         switch sortMode {
         case .newest: result.sort { $0.timestamp > $1.timestamp }
         case .oldest: result.sort { $0.timestamp < $1.timestamp }
@@ -66,9 +62,24 @@ struct EventsListView: View {
         return result
     }
 
+    private func matchesSearch(_ e: Event) -> Bool {
+        let q = searchText.lowercased()
+        return e.city.lowercased().contains(q) ||
+            e.reason.lowercased().contains(q) ||
+            e.zone.lowercased().contains(q) ||
+            e.summary.lowercased().contains(q) ||
+            e.address.lowercased().contains(q) ||
+            e.tag.lowercased().contains(q) ||
+            e.camera.lowercased().contains(q) ||
+            e.notes.lowercased().contains(q)
+    }
+
+    // MARK: - Body
+
     var body: some View {
         NavigationStack {
             content
+                // TEXT: navigation title at the top of the tab
                 .navigationTitle("Events")
                 #if os(macOS)
                 .navigationSubtitle("\(filteredEvents.count) of \(events.count)")
@@ -82,28 +93,36 @@ struct EventsListView: View {
         if events.isEmpty {
             emptyState
         } else if filteredEvents.isEmpty {
+            // UI: search returned nothing
             ContentUnavailableView.search
-                .toolbar { importToolbar }
+                .toolbar { EventsImportToolbar(showImportView: $showImportView) }
                 .searchable(text: $searchText, prompt: "Search events")
         } else {
             eventList
         }
     }
 
+    // MARK: - Empty state
+
     private var emptyState: some View {
+        // UI: shown when no events are imported yet
         ContentUnavailableView {
+            // TEXT: empty-state title + icon
             Label("No events yet", systemImage: "tray")
         } description: {
             Text("Import a folder of Tesla Sentry event exports to get started.")
         } actions: {
+            // BUTTON: open file importer
             Button("Import…") { showImportView = true }
                 .buttonStyle(.borderedProminent)
         }
-        .toolbar { importToolbar }
+        .toolbar { EventsImportToolbar(showImportView: $showImportView) }
         .fileImporter(isPresented: $showImportView, allowedContentTypes: [.directory]) { result in
-            handleImport(result: result)
+            EventsImportRunner.handle(result: result, modelContext: modelContext)
         }
     }
+
+    // MARK: - List
 
     private var eventList: some View {
         List {
@@ -113,264 +132,26 @@ struct EventsListView: View {
                 } label: {
                     EventRow(event: event)
                 }
-                .contextMenu {
-                    Button {
-                        event.isFavorite.toggle()
-                    } label: {
-                        Label(event.isFavorite ? "Unfavorite" : "Favorite",
-                              systemImage: event.isFavorite ? "star.slash" : "star")
-                    }
-                    Button {
-                        event.isArchived.toggle()
-                    } label: {
-                        Label(event.isArchived ? "Unarchive" : "Archive",
-                              systemImage: event.isArchived ? "tray.and.arrow.up" : "archivebox")
-                    }
-                    Button(role: .destructive) {
-                        modelContext.delete(event)
-                    } label: {
-                        Label("Delete", systemImage: "trash")
-                    }
-                }
+                .contextMenu { EventRowContextMenu(event: event) }
             }
         }
         .listStyle(.inset)
+        // TEXT: search placeholder shown in the search field
         .searchable(text: $searchText, prompt: "Search city, reason, plate, summary…")
         .toolbar {
-#if os(iOS)
-            ToolbarItem(placement: .navigationBarTrailing) {
-                EditButton()
-            }
-#endif
-            ToolbarItem {
-                Menu {
-                    Toggle("Favorites only", isOn: $favoritesOnly)
-                    Toggle("Show archived", isOn: $showArchived)
-                    Picker("Tag", selection: $tagFilter) {
-                        Text("All").tag("all")
-                        ForEach(["touched", "lingered", "approached", "passing", "vehicle", "noise", "unknown"], id: \.self) { t in
-                            Text(t.capitalized).tag(t)
-                        }
-                    }
-                    Picker("Sort by", selection: $sortMode) {
-                        ForEach(SortMode.allCases) { Text($0.label).tag($0) }
-                    }
-                } label: {
-                    Label("Filter", systemImage: "line.3.horizontal.decrease.circle")
-                }
-            }
-            importToolbar
+            #if os(iOS)
+            ToolbarItem(placement: .navigationBarTrailing) { EditButton() }
+            #endif
+            EventsFilterMenu(
+                favoritesOnly: $favoritesOnly,
+                showArchived: $showArchived,
+                tagFilter: $tagFilter,
+                sortMode: $sortMode
+            )
+            EventsImportToolbar(showImportView: $showImportView)
         }
         .fileImporter(isPresented: $showImportView, allowedContentTypes: [.directory]) { result in
-            handleImport(result: result)
-        }
-    }
-
-    @ToolbarContentBuilder
-    private var importToolbar: some ToolbarContent {
-        ToolbarItem {
-            Button {
-                showImportView = true
-            } label: {
-                Label("Import", systemImage: "square.and.arrow.down")
-            }
-        }
-    }
-
-    private func handleImport(result: Result<URL, Error>) {
-        switch result {
-        case .success(let url):
-            Task { @MainActor in
-                let didAccess = url.startAccessingSecurityScopedResource()
-                defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
-
-                let imported = await importEvents(url: url)
-
-                // Build dedupe sets from current store contents.
-                let existingVideoPaths: Set<String> = {
-                    let descriptor = FetchDescriptor<VideoRecording>()
-                    let existing = (try? modelContext.fetch(descriptor)) ?? []
-                    return Set(existing.map { $0.url.path })
-                }()
-                let existingEventKeys: Set<String> = {
-                    let descriptor = FetchDescriptor<Event>()
-                    let existing = (try? modelContext.fetch(descriptor)) ?? []
-                    return Set(existing.map(eventKey))
-                }()
-
-                var insertedEvents = 0
-                var insertedVideos = 0
-                var skippedEvents = 0
-                var skippedVideos = 0
-
-                for event in imported.events {
-                    if existingEventKeys.contains(eventKey(event)) {
-                        skippedEvents += 1
-                        continue
-                    }
-                    modelContext.insert(event)
-                    insertedEvents += 1
-                }
-                for video in imported.videos {
-                    if existingVideoPaths.contains(video.url.path) {
-                        skippedVideos += 1
-                        continue
-                    }
-                    modelContext.insert(video)
-                    insertedVideos += 1
-                }
-
-                do {
-                    try modelContext.save()
-                } catch {
-                    print("modelContext.save failed: \(error)")
-                }
-                print("Import: events +\(insertedEvents)/-\(skippedEvents), videos +\(insertedVideos)/-\(skippedVideos)")
-            }
-        case .failure:
-            print("nothing was selected")
-        }
-    }
-
-    private func eventKey(_ event: Event) -> String {
-        "\(event.source)|\(event.camera)|\(Int(event.timestamp.timeIntervalSince1970))"
-    }
-}
-
-struct EventRow: View {
-    let event: Event
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            cameraIcon
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    if event.isFavorite {
-                        Image(systemName: "star.fill")
-                            .foregroundStyle(.yellow)
-                            .font(.caption)
-                    }
-                    Text(event.timestamp.formatted(date: .abbreviated, time: .shortened))
-                        .font(.headline)
-                    if !event.reason.isEmpty {
-                        Text("· \(EventSummarizer.humanizeReason(event.reason))")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                }
-                HStack(spacing: 6) {
-                    let cameraName = TeslaCamera.displayName(for: event.camera)
-                    if !cameraName.isEmpty {
-                        Text(cameraName)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    if !event.city.isEmpty {
-                        Text(cameraName.isEmpty ? event.city : "· \(event.city)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                }
-                HStack(spacing: 6) {
-                    if !event.zone.isEmpty { ZoneChip(zone: event.zone) }
-                    if event.tag != "unknown" { TagChip(tag: event.tag) }
-                }
-            }
-            Spacer(minLength: 8)
-            if event.interestingnessScore > 0 {
-                ScoreBadge(score: event.interestingnessScore)
-            }
-        }
-        .padding(.vertical, 4)
-    }
-
-    private var cameraSymbol: String {
-        switch TeslaCamera.canonical(event.camera) {
-        case "front":          return "arrow.up.circle"
-        case "left_repeater":  return "arrow.left.circle"
-        case "right_repeater": return "arrow.right.circle"
-        case "back":           return "arrow.down.circle"
-        default:               return "camera"
-        }
-    }
-
-    private var cameraIcon: some View {
-        Image(systemName: cameraSymbol)
-            .font(.title2)
-            .foregroundStyle(.tint)
-            .frame(width: 28, height: 28)
-    }
-}
-
-struct ZoneChip: View {
-    let zone: String
-    var body: some View {
-        Text(zone)
-            .font(.caption2.bold())
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .foregroundStyle(.green)
-            .liquidGlassChip(tint: .green)
-    }
-}
-
-struct TagChip: View {
-    let tag: String
-    var body: some View {
-        let (label, color): (String, Color) = {
-            switch tag {
-            case "touched":    return ("Touched", .red)
-            case "lingered":   return ("Lingered", .orange)
-            case "approached": return ("Approached", .yellow)
-            case "passing":    return ("Passing", .blue)
-            case "vehicle":    return ("Vehicle", .purple)
-            case "noise":      return ("Noise", .gray)
-            default:           return (tag.capitalized, .secondary)
-            }
-        }()
-        Text(label)
-            .font(.caption2.bold())
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .foregroundStyle(color)
-            .liquidGlassChip(tint: color)
-    }
-}
-
-struct ScoreBadge: View {
-    let score: Double
-    var body: some View {
-        let pct = max(0, min(1, score))
-        let color: Color = pct > 0.66 ? .red : (pct > 0.33 ? .orange : .yellow)
-        Text(String(format: "%.0f", pct * 100))
-            .font(.caption2.monospacedDigit().bold())
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .foregroundStyle(color)
-            .liquidGlassChip(tint: color)
-    }
-}
-
-extension View {
-    /// Liquid Glass on supported OSes, falling back to a tinted material capsule.
-    @ViewBuilder
-    func liquidGlassChip(tint: Color) -> some View {
-        if #available(macOS 26.0, iOS 26.0, *) {
-            self.glassEffect(.regular.tint(tint.opacity(0.25)), in: .capsule)
-        } else {
-            self.background(tint.opacity(0.2), in: Capsule())
-        }
-    }
-
-    /// Liquid Glass card background, falling back to .thinMaterial.
-    @ViewBuilder
-    func liquidGlassCard(cornerRadius: CGFloat = 12) -> some View {
-        if #available(macOS 26.0, iOS 26.0, *) {
-            self.glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
-        } else {
-            self.background(.thinMaterial, in: RoundedRectangle(cornerRadius: cornerRadius))
+            EventsImportRunner.handle(result: result, modelContext: modelContext)
         }
     }
 }
