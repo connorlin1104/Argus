@@ -45,11 +45,10 @@ struct SyncedMultiCamPlayerView: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            ZStack(alignment: .top) {
-                grid
-                wallClockBadge
-                    .padding(.top, 10)
-            }
+            wallClockBadge
+            grid
+                .frame(maxWidth: 1050)
+                .frame(maxWidth: .infinity)
 
             keyboardShortcutLayer
 
@@ -118,23 +117,23 @@ struct SyncedMultiCamPlayerView: View {
         let columns = [GridItem(.flexible(), spacing: 4), GridItem(.flexible(), spacing: 4)]
         return LazyVGrid(columns: columns, spacing: 4) {
             ForEach(orderedCameras, id: \.self) { camID in
+                let name = TeslaCamera.displayName(for: camID)
+                let label = name.isEmpty ? "Camera" : name
                 ZStack(alignment: .topLeading) {
                     if let player = players[camID] {
-                        VideoPlayer(player: player)
-                            // Tesla cameras output 4:3. Letting hit-testing through
-                            // lets the parent ScrollView still receive scroll events.
+                        PlayerLayerView(player: player)
                             .aspectRatio(4.0/3.0, contentMode: .fit)
                             .allowsHitTesting(false)
                     } else {
                         Color.black
                             .aspectRatio(4.0/3.0, contentMode: .fit)
                             .overlay(
-                                Text("No \(TeslaCamera.displayName(for: camID)) feed")
+                                Text("No \(label) feed")
                                     .foregroundStyle(.secondary)
                                     .font(.caption)
                             )
                     }
-                    Text(TeslaCamera.displayName(for: camID))
+                    Text(label)
                         .font(.caption.bold())
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
@@ -204,6 +203,17 @@ struct SyncedMultiCamPlayerView: View {
         attachPrimaryTimeObserver()
 
         seekAll(to: 0)
+
+        // Auto-play once setup is complete.
+        isPlaying = true
+        for (cam, player) in players {
+            let offset = offsets[cam] ?? 0
+            let duration = durations[cam] ?? 0
+            let local = positionSeconds - offset
+            if local >= 0 && local <= duration {
+                player.play()
+            }
+        }
     }
 
     private func attachPrimaryTimeObserver() {

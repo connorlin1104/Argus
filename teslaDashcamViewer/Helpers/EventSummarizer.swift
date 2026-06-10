@@ -52,7 +52,9 @@ enum EventSummarizer {
 
             Rules:
             - Only use the facts provided. Do not invent license plates, times, or people.
-            - Refer to cameras by name (Front, Rear, Left, Right).
+            - Refer to cameras by name (Front, Rear, Left, Right). If the triggering \
+              camera was not provided in the facts, just say "one of the cameras" rather \
+              than inventing a camera id or saying "camera 6".
             - Convert presence durations and distances into natural phrases (e.g. \
               "lingered for about 12 seconds", "came within roughly 1.8 meters").
             - If a field is missing, just omit it; do not write "unknown" or "N/A".
@@ -78,7 +80,10 @@ enum EventSummarizer {
     private static func buildFacts(event: Event, detection: DetectionSummary?) -> String {
         var lines: [String] = []
         lines.append("- timestamp: \(event.timestamp.formatted(date: .abbreviated, time: .standard))")
-        lines.append("- triggering camera: \(TeslaCamera.displayName(for: event.camera))")
+        let camName = TeslaCamera.displayName(for: event.camera)
+        if !camName.isEmpty {
+            lines.append("- triggering camera: \(camName)")
+        }
         if !event.city.isEmpty { lines.append("- city: \(event.city)") }
         if !event.address.isEmpty { lines.append("- address: \(event.address)") }
         if !event.zone.isEmpty { lines.append("- zone: \(event.zone)") }

@@ -25,11 +25,14 @@ struct EventDetailView: View {
         )
     }
 
+    private var hasHeader: Bool {
+        !event.zone.isEmpty || event.tag != "unknown" || event.interestingnessScore > 0
+    }
+
     var body: some View {
-        let _ = Self._printChanges()
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                header
+                if hasHeader { header }
 
                 if !matchedVideos.isEmpty {
                     SyncedMultiCamPlayerView(videos: matchedVideos)
@@ -49,16 +52,19 @@ struct EventDetailView: View {
             }
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .topLeading)
-            .onAppear {
-                print("EventDetailView: event.timestamp=\(event.timestamp), matchedVideos.count=\(matchedVideos.count)")
-                for v in matchedVideos {
-                    print("  - cam=\(v.camera) start=\(v.startTime) end=\(v.endTime) path=\(v.url.lastPathComponent)")
-                }
+        }
+        .onAppear {
+            print("EventDetailView: event.timestamp=\(event.timestamp), matchedVideos.count=\(matchedVideos.count)")
+            for v in matchedVideos {
+                print("  - cam=\(v.camera) start=\(v.startTime) end=\(v.endTime) path=\(v.url.lastPathComponent)")
             }
         }
         .navigationTitle(event.timestamp.formatted(date: .abbreviated, time: .shortened))
         #if os(macOS)
-        .navigationSubtitle(TeslaCamera.displayName(for: event.camera))
+        .navigationSubtitle({
+            let n = TeslaCamera.displayName(for: event.camera)
+            return n.isEmpty ? "" : n
+        }())
         #endif
         .toolbar {
             ToolbarItem {
@@ -80,17 +86,10 @@ struct EventDetailView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(event.reason.isEmpty ? "Sentry event" : EventSummarizer.humanizeReason(event.reason))
-                    .font(.title3.bold())
-                    .lineLimit(2)
-                HStack(spacing: 6) {
-                    if !event.zone.isEmpty { ZoneChip(zone: event.zone) }
-                    if event.tag != "unknown" { TagChip(tag: event.tag) }
-                    if event.interestingnessScore > 0 { ScoreBadge(score: event.interestingnessScore) }
-                }
-            }
+        HStack(spacing: 6) {
+            if !event.zone.isEmpty { ZoneChip(zone: event.zone) }
+            if event.tag != "unknown" { TagChip(tag: event.tag) }
+            if event.interestingnessScore > 0 { ScoreBadge(score: event.interestingnessScore) }
             Spacer()
         }
     }
@@ -120,7 +119,8 @@ struct EventDetailView: View {
     private var metadataSection: some View {
         Section_Card(title: "Details", symbol: "info.circle") {
             VStack(spacing: 0) {
-                row("Camera", value: TeslaCamera.displayName(for: event.camera))
+                let camera = TeslaCamera.displayName(for: event.camera)
+                if !camera.isEmpty { row("Camera", value: camera) }
                 if !event.city.isEmpty { row("City", value: event.city) }
                 if event.address.isEmpty {
                     HStack {

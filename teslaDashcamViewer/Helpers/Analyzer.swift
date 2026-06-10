@@ -105,13 +105,15 @@ enum TeslaCamera {
         }
     }
 
+    /// Friendly name. Returns "" if the camera ID is not one we recognize,
+    /// so callers can omit the field rather than show a meaningless raw ID.
     static func displayName(for cameraID: String) -> String {
         switch canonical(cameraID) {
         case "front": return "Front"
         case "left_repeater": return "Left"
         case "right_repeater": return "Right"
         case "back": return "Rear"
-        default: return cameraID
+        default: return ""
         }
     }
 }

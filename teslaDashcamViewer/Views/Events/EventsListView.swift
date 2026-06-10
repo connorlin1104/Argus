@@ -252,13 +252,22 @@ struct EventRow: View {
                     }
                     Text(event.timestamp.formatted(date: .abbreviated, time: .shortened))
                         .font(.headline)
+                    if !event.reason.isEmpty {
+                        Text("· \(EventSummarizer.humanizeReason(event.reason))")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
                 }
                 HStack(spacing: 6) {
-                    Label(TeslaCamera.displayName(for: event.camera), systemImage: cameraSymbol)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    let cameraName = TeslaCamera.displayName(for: event.camera)
+                    if !cameraName.isEmpty {
+                        Text(cameraName)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     if !event.city.isEmpty {
-                        Text("· \(event.city)")
+                        Text(cameraName.isEmpty ? event.city : "· \(event.city)")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
@@ -278,12 +287,12 @@ struct EventRow: View {
     }
 
     private var cameraSymbol: String {
-        switch event.camera {
-        case "0": return "arrow.up.circle"
-        case "3": return "arrow.left.circle"
-        case "4": return "arrow.right.circle"
-        case "5": return "arrow.down.circle"
-        default:  return "camera"
+        switch TeslaCamera.canonical(event.camera) {
+        case "front":          return "arrow.up.circle"
+        case "left_repeater":  return "arrow.left.circle"
+        case "right_repeater": return "arrow.right.circle"
+        case "back":           return "arrow.down.circle"
+        default:               return "camera"
         }
     }
 
