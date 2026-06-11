@@ -26,15 +26,20 @@ struct EventNameSection: View {
     @State private var draft: String = ""
     @FocusState private var fieldFocused: Bool
 
+    /// FONT: sized so the badge frame matches the wall-clock badge on the right.
+    /// The wall-clock badge is a two-line VStack (26pt time + caption2 date), so
+    /// a single-line title needs a larger font to occupy the same vertical span.
+    private static let titleFontSize: CGFloat = 36
+
     var body: some View {
         Group {
             if isEditing {
                 // UI: inline rename field
                 TextField("Name this event", text: $draft)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 26, weight: .semibold, design: .monospaced))
+                    .font(.system(size: Self.titleFontSize, weight: .semibold, design: .monospaced))
                     .lineLimit(1)
-                    .minimumScaleFactor(0.4)
+                    .minimumScaleFactor(0.3)
                     .focused($fieldFocused)
                     .onSubmit { commit() }
                     .onExitCommand { cancel() }
@@ -45,15 +50,23 @@ struct EventNameSection: View {
             } else {
                 // TEXT: prominent event name — single-tap to rename
                 Text(displayName)
-                    .font(.system(size: 26, weight: .semibold, design: .monospaced))
+                    .font(.system(size: Self.titleFontSize, weight: .semibold, design: .monospaced))
                     .lineLimit(1)
-                    .minimumScaleFactor(0.4)
+                    .minimumScaleFactor(0.3)
                     .contentShape(Rectangle())
                     .onTapGesture { begin() }
                     .help("Click to rename this event")
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        // LAYOUT/COLOR: match the wall-clock badge chrome so the name reads as
+        // a peer to the timer on the right column.
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8).stroke(.white.opacity(0.2), lineWidth: 0.5)
+        )
     }
 
     /// What renders on the name line: customName if set, else humanized reason.

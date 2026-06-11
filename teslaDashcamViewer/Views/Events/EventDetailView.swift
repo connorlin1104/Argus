@@ -13,12 +13,25 @@
 import SwiftUI
 import SwiftData
 
+/// LAYOUT: Preference key used to read the right (player) column's natural
+/// height so the left info column can match it. Without this, Notes absorbs
+/// the entire parent height and overruns the player on tall windows.
+private struct RightColumnHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
 struct EventDetailView: View {
     @Bindable var event: Event
     @State private var isGenerating: Bool = false
     /// LAYOUT: Owned here so the camera-select buttons in the left info column
     /// can drive the player's focus mode.
     @State private var focusedCamera: String? = nil
+    /// LAYOUT: Measured height of the player column. Used to clamp the left
+    /// info column so Notes stops growing at the player's bottom.
+    @State private var rightColumnHeight: CGFloat = 0
 
     /// Videos whose recording window covers this event's timestamp.
     @Query private var matchedVideos: [VideoRecording]
@@ -59,19 +72,40 @@ struct EventDetailView: View {
         HStack(alignment: .top, spacing: columnSpacing) {
             leftInfoColumn
                 .frame(minWidth: leftColumnMinWidth, maxWidth: .infinity, alignment: .topLeading)
-                // LAYOUT: pull the name section up so its big text aligns with the
-                // wall-clock timer on the right. The badge sits at .padding(.top, -12)
-                // with .padding(.vertical, 6) inside, so its big text starts ~6pt
-                // above its container — match that here.
-                .padding(.top, -6)
+                // LAYOUT: clamp to the right column's natural height (+12 to
+                // compensate for the -12 top padding below that lifts the name
+                // badge to timer level) so Notes can't push past the player.
+                .frame(
+                    maxHeight: rightColumnHeight > 0 ? rightColumnHeight + 12 : .infinity,
+                    alignment: .top
+                )
+                // LAYOUT: pull the name badge up so its frame aligns with the
+                // wall-clock badge on the right (which sits at .padding(.top, -12)).
+                .padding(.top, -12)
 
             rightPlayerColumn
                 .frame(maxWidth: playerColumnMaxWidth, alignment: .top)
+                .background(
+                    // LAYOUT: report the player column's natural height up to
+                    // the parent so the left column can match it.
+                    GeometryReader { geo in
+                        Color.clear.preference(
+                            key: RightColumnHeightKey.self,
+                            value: geo.size.height
+                        )
+                    }
+                )
                 .layoutPriority(1)
         }
         // LAYOUT: outer padding around the whole detail page
         .padding(20)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onPreferenceChange(RightColumnHeightKey.self) { newValue in
+            // Guard against tiny oscillations that would trigger relayout loops.
+            if abs(newValue - rightColumnHeight) > 0.5 {
+                rightColumnHeight = newValue
+            }
+        }
         .onAppear { logMatches() }
         .navigationTitle(event.timestamp.formatted(date: .abbreviated, time: .shortened))
         #if os(macOS)
@@ -90,7 +124,10 @@ struct EventDetailView: View {
     /// Notes expands to absorb any leftover vertical space so the column matches the player height.
     @ViewBuilder
     private var leftInfoColumn: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        // LAYOUT: spacing 8 matches the player column's VStack so the gap from
+        // the title badge down to the AI Summary card visually equals the gap
+        // from the wall-clock badge down to the video grid.
+        VStack(alignment: .leading, spacing: 6) {
             // UI: editable event name at top, sized to match the timer
             EventNameSection(event: event)
             if hasHeader { headerChips }
