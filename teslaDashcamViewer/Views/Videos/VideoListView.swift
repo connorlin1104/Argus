@@ -19,7 +19,7 @@ import SwiftData
 struct VideoListView: View {
     @Environment(\.modelContext) private var modelContext
     @State private var videoAnalyzer = VideoAnalyzer()
-    @State private var playingURL: URL?
+    @State private var playingVideo: VideoRecording?
     var eventTime: Date?
 
     @Query(sort: [SortDescriptor(\VideoRecording.startTime, order: .reverse)])
@@ -48,11 +48,8 @@ struct VideoListView: View {
                 .navigationSubtitle("\(videos.count) clip\(videos.count == 1 ? "" : "s")")
                 #endif
                 .toolbar { analyzeToolbar }
-                .sheet(item: Binding(
-                    get: { playingURL.map(IdentifiableURL.init) },
-                    set: { playingURL = $0?.url }
-                )) { wrapper in
-                    PlayerSheet(url: wrapper.url) { playingURL = nil }
+                .sheet(item: $playingVideo) { video in
+                    PlayerSheet(video: video) { playingVideo = nil }
                 }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -75,14 +72,17 @@ struct VideoListView: View {
         }
     }
 
-    /// UI: grouped list by date.
+    /// UI: grouped list by date. Each row's whole area is the tap target —
+    /// matches the events-list interaction model.
     private var list: some View {
         List {
             Section {
                 ForEach(grouped, id: \.key) { group in
                     Section(header: Text(group.key)) {
                         ForEach(group.value) { video in
-                            VideoRow(video: video) { play(video) }
+                            VideoRow(video: video)
+                                .contentShape(Rectangle())
+                                .onTapGesture { playingVideo = video }
                         }
                     }
                 }
@@ -131,11 +131,6 @@ struct VideoListView: View {
         return groups.sorted { $0.key > $1.key }
     }
 
-    private func play(_ video: VideoRecording) {
-        guard let url = resolveBookmark(bookmarkData: video.bookmark) else { return }
-        playingURL = url
-    }
-
     private func runAnalysis() {
         let snapshot = Array(videos)
         Task { @MainActor in
@@ -144,20 +139,6 @@ struct VideoListView: View {
                 analyzer: videoAnalyzer,
                 modelContext: modelContext
             )
-        }
-    }
-
-    private func resolveBookmark(bookmarkData: Data) -> URL? {
-        do {
-            var isStale = false
-            #if os(iOS)
-            return try URL(resolvingBookmarkData: bookmarkData, bookmarkDataIsStale: &isStale)
-            #else
-            return try URL(resolvingBookmarkData: bookmarkData, options: .withSecurityScope, bookmarkDataIsStale: &isStale)
-            #endif
-        } catch {
-            print("Bookmark resolution error: \(error)")
-            return nil
         }
     }
 }

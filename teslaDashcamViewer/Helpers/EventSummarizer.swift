@@ -38,25 +38,31 @@ enum EventSummarizer {
                 return deterministicSummary(facts: factsBlock)
             }
             let instructions = """
-            You analyze Tesla Sentry Mode dashcam events and write clear, useful summaries \
-            for the vehicle owner. You receive structured facts gathered from on-device \
-            computer vision and the Tesla event metadata.
+            You analyze Tesla Sentry Mode dashcam events and write a short, factual \
+            summary for the vehicle owner. You receive structured facts gathered from \
+            on-device computer vision and the Tesla event metadata.
 
-            Write 3 to 5 sentences. Cover:
-            1. What happened, in plain language — who or what is in the scene, where on \
-               or around the car the activity took place, and how the encounter unfolded.
-            2. Severity: was this likely a casual passerby, suspicious lingering, deliberate \
-               approach, contact with the car, or vehicle-only activity?
-            3. Any concrete signals to follow up on (close approach distances, sustained \
-               presence, license plates spotted, which cameras saw the action).
+            STRICT GROUNDING — read first:
+            - Describe ONLY what appears in the facts. Do not invent scene content. \
+              In particular: do not mention passengers, drivers, gestures, gazes, \
+              emotions, intentions, conversations, dialog, traffic, pedestrians, \
+              weather, time of day, or any activity that is not explicitly listed \
+              in the facts.
+            - If the facts contain no detection data (no people, vehicle, or plate \
+              counts), do NOT describe the video's contents at all. Instead, write \
+              just 1–2 sentences stating only the trigger reason, the camera, the \
+              time, and the location — whichever of those are provided. Explicitly \
+              say that no on-device analysis has been run yet.
+            - If detection facts ARE provided, write 3 to 5 sentences covering: \
+              what the detections imply (presence durations, distances, plates), \
+              severity (casual passerby vs. lingering vs. deliberate approach vs. \
+              contact vs. vehicle-only), and concrete signals to follow up on.
 
-            Rules:
-            - Only use the facts provided. Do not invent license plates, times, or people.
+            Style:
             - Refer to cameras by name (Front, Rear, Left, Right). If the triggering \
-              camera was not provided in the facts, just say "one of the cameras" rather \
-              than inventing a camera id or saying "camera 6".
-            - Convert presence durations and distances into natural phrases (e.g. \
-              "lingered for about 12 seconds", "came within roughly 1.8 meters").
+              camera isn't given, say "one of the cameras" — never invent a camera id.
+            - Convert presence durations and distances into natural phrases ("lingered \
+              for about 12 seconds", "came within roughly 1.8 meters").
             - If a field is missing, just omit it; do not write "unknown" or "N/A".
             - Plain prose, no bullet lists, no markdown.
             """

@@ -2,8 +2,10 @@
 //  VideoRow.swift
 //  teslaDashcamViewer
 //
-//  One row in the videos list: thumbnail + camera name + duration + play button.
-//  Search keywords: UI:video-row, LAYOUT:video-row, ICON:play, COLOR:video-row
+//  One row in the videos list: thumbnail + camera name + duration. The whole
+//  row is the tap target — tapping anywhere opens the player sheet, with a
+//  hover highlight matching the events list.
+//  Search keywords: UI:video-row, LAYOUT:video-row, COLOR:video-row
 //
 
 import SwiftUI
@@ -16,12 +18,14 @@ import AppKit
 
 struct VideoRow: View {
     let video: VideoRecording
-    var onPlay: () -> Void
 
     @State private var thumbnail: Image?
 
+    /// UI: true while the cursor is over this row — drives the background tint.
+    @State private var isHovered: Bool = false
+
     var body: some View {
-        // UI: row layout
+        // UI: row layout — the whole row is the tap target.
         HStack(spacing: 12) {
             thumbnailView
 
@@ -41,19 +45,21 @@ struct VideoRow: View {
             }
 
             Spacer()
-
-            // BUTTON: play this clip
-            Button {
-                onPlay()
-            } label: {
-                Image(systemName: "play.circle.fill")
-                    .font(.title)                  // FONT: play icon size
-                    .foregroundStyle(.tint)        // COLOR: tint color
-            }
-            .buttonStyle(.plain)
         }
+        // LAYOUT: horizontal padding so the hover pill has breathing room.
+        .padding(.horizontal, 8)
         // LAYOUT: row vertical padding
         .padding(.vertical, 4)
+        // UI: hover highlight — subtle accent tint behind the whole row.
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(isHovered ? Color.accentColor.opacity(0.14) : Color.clear)
+        )
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            isHovered = hovering
+        }
+        .animation(.easeOut(duration: 0.12), value: isHovered)
         .task(id: video.url.path) {
             await loadThumbnail()
         }
