@@ -38,6 +38,14 @@ struct EventDetailView: View {
     /// info column so Notes stops growing at the player's bottom.
     @State private var rightColumnHeight: CGFloat = 0
 
+    /// LAYOUT: drives single-column stacking on iPhone-width screens.
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    private var isCompact: Bool { horizontalSizeClass == .compact }
+    #else
+    private var isCompact: Bool { false }
+    #endif
+
     /// Videos whose recording window covers this event's timestamp.
     @Query private var matchedVideos: [VideoRecording]
 
@@ -79,6 +87,30 @@ struct EventDetailView: View {
     // MARK: - Body
 
     var body: some View {
+        Group {
+            if isCompact {
+                compactBody
+            } else {
+                regularBody
+            }
+        }
+        .onAppear { logMatches() }
+        .navigationTitle(event.timestamp.formatted(date: .abbreviated, time: .shortened))
+        #if os(macOS)
+        .navigationSubtitle({
+            let n = TeslaCamera.displayName(for: event.camera)
+            return n.isEmpty ? "" : n
+        }())
+        #endif
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        #endif
+        .toolbar { toolbarContent }
+    }
+
+    /// macOS / iPad regular-width layout — info card column hugs the left, player hugs the right.
+    @ViewBuilder
+    private var regularBody: some View {
         // LAYOUT: two-column page. No outer scroll — info hugs the left, video hugs the right.
         HStack(alignment: .top, spacing: columnSpacing) {
             leftInfoColumn
@@ -117,15 +149,35 @@ struct EventDetailView: View {
                 rightColumnHeight = newValue
             }
         }
-        .onAppear { logMatches() }
-        .navigationTitle(event.timestamp.formatted(date: .abbreviated, time: .shortened))
-        #if os(macOS)
-        .navigationSubtitle({
-            let n = TeslaCamera.displayName(for: event.camera)
-            return n.isEmpty ? "" : n
-        }())
-        #endif
-        .toolbar { toolbarContent }
+    }
+
+    /// iPhone / compact-width layout — single scrollable column.
+    /// Player on top (with its own transport bar), name + chips + summary +
+    /// camera buttons + details + mini map + notes stacked beneath. Notes drops
+    /// its height-matching behavior here since the page scrolls naturally.
+    @ViewBuilder
+    private var compactBody: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                rightPlayerColumn
+                    .frame(maxWidth: .infinity)
+
+                EventNameSection(event: event)
+                if hasHeader { headerChips }
+                EventSummarySection(event: event, isGenerating: $isGenerating)
+                cameraButtonsRows
+                // LAYOUT: on compact, Details and the mini map each get full
+                // width — the map drops below Details instead of sitting to
+                // its right.
+                EventMetadataSection(event: event)
+                EventMiniMapSection(event: event)
+                    .frame(height: 220)
+                EventNotesSection(event: event)
+                    .frame(minHeight: 160)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+        }
     }
 
     // MARK: - Left info column

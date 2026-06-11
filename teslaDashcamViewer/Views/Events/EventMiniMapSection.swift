@@ -94,7 +94,7 @@ struct EventMiniMapSection: View {
             }
         }
         .mapStyle(.standard(elevation: .flat))
-        .aspectRatio(1.2, contentMode: .fit)
+        .aspectRatio(1.1, contentMode: .fit)
         .overlay(alignment: .topLeading) {
             if let cluster = pickerCluster {
                 clusterPicker(cluster)

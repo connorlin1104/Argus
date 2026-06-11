@@ -39,9 +39,12 @@ struct PlayerSheet: View {
         VStack(spacing: 0) {
             header
             playerSurface
+            Spacer(minLength: 0)
         }
-        // LAYOUT: wider sheet so the 4:3 video has room to breathe.
+        #if os(macOS)
+        // LAYOUT: wider sheet so the 4:3 video has room to breathe on desktop.
         .frame(minWidth: 960, minHeight: 760)
+        #endif
         .onAppear { setupPlayer() }
         .onDisappear { teardownPlayer() }
     }
