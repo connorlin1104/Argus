@@ -32,8 +32,10 @@ struct EventsListView: View {
     @State private var showArchived: Bool = false
 
     // === Navigation ===
-    /// Row the user wants to open (single-click). Drives navigationDestination.
-    @State private var openedEvent: Event?
+    /// NAV: typed path for the events tab. Push events with `path.append(event)`.
+    /// Descendant views (e.g. the mini-map in EventDetailView) push via the
+    /// `\.openEvent` environment action below.
+    @State private var path: [Event] = []
 
     /// TEXT: visible sort options in the filter menu.
     enum SortMode: String, CaseIterable, Identifiable {
@@ -81,20 +83,23 @@ struct EventsListView: View {
     // MARK: - Body
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             content
                 // TEXT: navigation title at the top of the tab
                 .navigationTitle("Events")
                 #if os(macOS)
                 .navigationSubtitle("\(filteredEvents.count) of \(events.count)")
                 #endif
-                // NAV: a tap anywhere on the row (except the trigger) sets
-                // openedEvent and pushes the detail. Attached outside the lazy
-                // List per Apple's guidance.
-                .navigationDestination(item: $openedEvent) { event in
+                // NAV: typed destination so any descendant can push another
+                // event by appending to `path` (used by the detail mini-map).
+                .navigationDestination(for: Event.self) { event in
                     EventDetailView(event: event)
                 }
         }
+        // NAV: expose a push action so descendants don't need to own the path.
+        .environment(\.openEvent, OpenEventAction { event in
+            path.append(event)
+        })
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
@@ -143,7 +148,7 @@ struct EventsListView: View {
             ForEach(filteredEvents) { event in
                 EventRow(event: event)
                     .contentShape(Rectangle())
-                    .onTapGesture { openedEvent = event }
+                    .onTapGesture { path.append(event) }
                     .contextMenu { EventRowContextMenu(event: event) }
             }
         }
@@ -170,4 +175,18 @@ struct EventsListView: View {
 
 #Preview {
     EventsListView()
+}
+
+// MARK: - Cross-view navigation
+
+/// NAV: action that pushes an Event onto the events-tab navigation stack.
+/// Descendant views (currently the detail-view mini map) call this to open
+/// another event without needing to own the navigation path themselves.
+struct OpenEventAction {
+    var callback: (Event) -> Void
+    func callAsFunction(_ event: Event) { callback(event) }
+}
+
+extension EnvironmentValues {
+    @Entry var openEvent: OpenEventAction = OpenEventAction { _ in }
 }

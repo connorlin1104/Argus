@@ -5,7 +5,12 @@
 //  Top-level event detail screen. Composes the multi-cam player, AI summary,
 //  metadata card, and notes editor.
 //
-//  Sub-sections live in EventDetailSections.swift.
+//  Sub-sections live in their own files alongside this one:
+//    - EventNameSection.swift
+//    - EventSummarySection.swift
+//    - EventMetadataSection.swift
+//    - EventMiniMapSection.swift
+//    - EventNotesSection.swift
 //  Reusable card chrome lives in Views/Style/SectionCard.swift.
 //  Search keywords: UI:event-detail, LAYOUT:detail
 //
@@ -52,7 +57,13 @@ struct EventDetailView: View {
     /// SyncedMultiCamPlayerView's own playerMaxWidth so the timeline lines up.
     private let playerColumnMaxWidth: CGFloat = 1052
     /// LAYOUT: Minimum width of the left info column on small windows.
-    private let leftColumnMinWidth: CGFloat = 280
+    /// Sized so the Details card + the square mini map can sit side-by-side
+    /// (≈220pt map + spacing + ≈200pt details).
+    private let leftColumnMinWidth: CGFloat = 460
+    /// LAYOUT: Fixed edge length of the square mini map next to Details.
+    /// Keeping it fixed lets Details flex with the left column's width while
+    /// the map stays perfectly square.
+    private let miniMapSize: CGFloat = 220
     /// LAYOUT: Horizontal gap between the info column and the player column.
     private let columnSpacing: CGFloat = 16
 
@@ -133,7 +144,16 @@ struct EventDetailView: View {
             if hasHeader { headerChips }
             EventSummarySection(event: event, isGenerating: $isGenerating)
             cameraButtonsRows
-            EventMetadataSection(event: event)
+            // LAYOUT: Details + square mini map share one row. Details flexes
+            // to absorb whatever the column's width allows; the map column is
+            // a fixed width so the inner map stays a clean square (the card's
+            // height grows naturally to fit the header + square map).
+            HStack(alignment: .top, spacing: 8) {
+                EventMetadataSection(event: event)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                EventMiniMapSection(event: event)
+                    .frame(width: miniMapSize)
+            }
             // LAYOUT: Notes is the only flexible section — it absorbs any slack
             // so the other cards keep their natural sizes.
             EventNotesSection(event: event)

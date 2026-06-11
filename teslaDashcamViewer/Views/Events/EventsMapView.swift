@@ -62,8 +62,12 @@ struct EventsMapView: View {
 
     // MARK: - Marker styling
 
-    /// TEXT: marker title — city if known, otherwise timestamp.
+    /// TEXT: marker title — prefer the user-set name, then the humanized
+    /// trigger, then city, then timestamp. Matches the detail-view mini map
+    /// so a starred event reads the same on both maps.
     private func markerTitle(_ event: Event) -> String {
+        if !event.customName.isEmpty { return event.customName }
+        if !event.reason.isEmpty { return EventSummarizer.humanizeReason(event.reason) }
         if !event.city.isEmpty { return event.city }
         return event.timestamp.formatted(date: .abbreviated, time: .shortened)
     }
