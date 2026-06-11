@@ -59,9 +59,11 @@ struct EventDetailView: View {
         HStack(alignment: .top, spacing: columnSpacing) {
             leftInfoColumn
                 .frame(minWidth: leftColumnMinWidth, maxWidth: .infinity, alignment: .topLeading)
-                // LAYOUT: pull the AI Summary card up so its top aligns with the
-                // wall-clock badge on the right (which sits ~12pt above its container).
-                .padding(.top, -10)
+                // LAYOUT: pull the name section up so its big text aligns with the
+                // wall-clock timer on the right. The badge sits at .padding(.top, -12)
+                // with .padding(.vertical, 6) inside, so its big text starts ~6pt
+                // above its container — match that here.
+                .padding(.top, -6)
 
             rightPlayerColumn
                 .frame(maxWidth: playerColumnMaxWidth, alignment: .top)
@@ -89,10 +91,14 @@ struct EventDetailView: View {
     @ViewBuilder
     private var leftInfoColumn: some View {
         VStack(alignment: .leading, spacing: 12) {
+            // UI: editable event name at top, sized to match the timer
+            EventNameSection(event: event)
             if hasHeader { headerChips }
             EventSummarySection(event: event, isGenerating: $isGenerating)
             cameraButtonsRows
             EventMetadataSection(event: event)
+            // LAYOUT: Notes is the only flexible section — it absorbs any slack
+            // so the other cards keep their natural sizes.
             EventNotesSection(event: event)
         }
         .frame(maxHeight: .infinity, alignment: .top)
