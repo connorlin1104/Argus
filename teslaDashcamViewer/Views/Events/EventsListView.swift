@@ -31,6 +31,10 @@ struct EventsListView: View {
     @State private var favoritesOnly: Bool = false
     @State private var showArchived: Bool = false
 
+    // === Navigation ===
+    /// Row the user wants to open (single-click). Drives navigationDestination.
+    @State private var openedEvent: Event?
+
     /// TEXT: visible sort options in the filter menu.
     enum SortMode: String, CaseIterable, Identifiable {
         case newest, oldest, score
@@ -84,6 +88,12 @@ struct EventsListView: View {
                 #if os(macOS)
                 .navigationSubtitle("\(filteredEvents.count) of \(events.count)")
                 #endif
+                // NAV: a tap anywhere on the row (except the trigger) sets
+                // openedEvent and pushes the detail. Attached outside the lazy
+                // List per Apple's guidance.
+                .navigationDestination(item: $openedEvent) { event in
+                    EventDetailView(event: event)
+                }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -125,14 +135,16 @@ struct EventsListView: View {
     // MARK: - List
 
     private var eventList: some View {
+        // UI: tap-driven list. Each row owns its own hover highlight and
+        // its own tap handler — a tap on the row opens the detail; a tap on
+        // the row's trigger label opens the inline rename instead (the
+        // trigger's gesture wins because it's the deeper view).
         List {
             ForEach(filteredEvents) { event in
-                NavigationLink {
-                    EventDetailView(event: event)
-                } label: {
-                    EventRow(event: event)
-                }
-                .contextMenu { EventRowContextMenu(event: event) }
+                EventRow(event: event)
+                    .contentShape(Rectangle())
+                    .onTapGesture { openedEvent = event }
+                    .contextMenu { EventRowContextMenu(event: event) }
             }
         }
         .listStyle(.inset)

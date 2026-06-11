@@ -43,6 +43,10 @@ final class Event {
     /// Archived events are hidden from the default list view.
     var isArchived: Bool = false
 
+    /// User-supplied display name shown in the events list in place of the
+    /// humanized trigger reason. Empty string means "use the default reason".
+    var customName: String = ""
+
     init(source: String, camera: String, city: String, estLatitude: String, estLongitude: String, reason: String, timestamp: Date, interestingnessScore: Double = 0, tag: String = "unknown", summary: String = "") {
         self.source = source
         self.camera = camera
