@@ -1,4 +1,4 @@
-# Tesla Dashcam Viewer
+# Argus
 
 A native macOS / iOS app for browsing Tesla Sentry & dashcam exports. Imports a USB drive's `SavedClips`/`SentryClips` folders, plays all four cameras in sync, runs on-device computer-vision analysis to surface noteworthy events, and writes plain-language summaries using Apple's on-device foundation model.
 
@@ -23,8 +23,8 @@ Built with SwiftUI, SwiftData, AVFoundation, Vision, MapKit, and (where availabl
 
 ## Getting started
 
-1. Clone the repo and open `teslaDashcamViewer.xcodeproj` in Xcode.
-2. Select the `teslaDashcamViewer` scheme and a Mac / iOS destination.
+1. Clone the repo and open `Argus.xcodeproj` in Xcode.
+2. Select the `Argus` scheme and a Mac / iOS destination.
 3. Build & run.
 4. On first launch, plug in your Tesla USB drive (or mount the export folder), tap **Import**, and pick the `SavedClips` or `SentryClips` directory.
 5. Tap **Analyze all** in the Videos tab to run the Vision pipeline over every imported clip.
@@ -34,7 +34,7 @@ Built with SwiftUI, SwiftData, AVFoundation, Vision, MapKit, and (where availabl
 The codebase is intentionally broken into small files (every file ≤ 200 lines) so any single screen, control, or helper can be tweaked without scrolling through unrelated code.
 
 ```
-teslaDashcamViewer/
+Argus/
 ├── Helpers/
 │   ├── Analyzer.swift                 # Observable VideoAnalyzer (progress state)
 │   ├── DetectionEngine.swift          # Vision pipeline (humans / plates / vehicles)
@@ -105,7 +105,7 @@ Examples:
 
 ## Architecture notes
 
-- **SwiftData stores split in two:** `MetadataStore` (Events + Geofences) is CloudKit-syncable, `VideosStore` is local-only because video URLs depend on security-scoped bookmarks. See `teslaDashcamViewerApp.swift`.
+- **SwiftData stores split in two:** `MetadataStore` (Events + Geofences) is CloudKit-syncable, `VideosStore` is local-only because video URLs depend on security-scoped bookmarks. See `ArgusApp.swift`.
 - **Multi-cam sync** uses one earliest-start *anchor* time + per-camera offsets. A periodic time observer on a "primary" camera (preferring Front) drives the shared scrubber position; seek translates the global position back to each camera's local time, clamping or pausing at boundaries.
 - **Detection runs off-main** via `Task.detached(priority: .userInitiated)`, with the `VideoAnalyzer` `@Observable` class only holding the progress state on the main actor.
 - **AI summaries** use `FoundationModels.SystemLanguageModel.default` when `.available`; otherwise they fall back to a deterministic concatenation of the facts that would have been sent to the model. No data leaves the device.
