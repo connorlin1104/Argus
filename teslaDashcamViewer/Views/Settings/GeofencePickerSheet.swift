@@ -13,11 +13,16 @@ import CoreLocation
 
 struct GeofencePickerSheet: View {
     @Environment(\.dismiss) private var dismiss
-    var onSave: (_ name: String, _ coordinate: CLLocationCoordinate2D, _ radius: Double) -> Void
+    var onSave: (_ name: String, _ coordinate: CLLocationCoordinate2D, _ radius: Double,
+                 _ colorHex: String, _ iconSymbol: String) -> Void
 
     @State private var name: String = ""
     /// TUNING: default geofence radius in meters
     @State private var radius: Double = 100
+    /// User-chosen tint for the zone chip + map marker.
+    @State private var color: Color = .green
+    /// SF Symbol the map marker uses for this zone.
+    @State private var symbol: String = GeofenceStyle.symbolPalette.first ?? "house.fill"
     /// LAYOUT: default map starting region (downtown SF)
     @State private var position: MapCameraPosition = .region(
         MKCoordinateRegion(
@@ -86,6 +91,12 @@ struct GeofencePickerSheet: View {
                     Text("Radius: \(Int(radius)) m")
                     Slider(value: $radius, in: 25...500, step: 5)
                 }
+                ColorPicker("Tint", selection: $color, supportsOpacity: false)
+                Picker("Icon", selection: $symbol) {
+                    ForEach(GeofenceStyle.symbolPalette, id: \.self) { sym in
+                        Label(sym, systemImage: sym).tag(sym)
+                    }
+                }
                 if let pinned {
                     // TEXT: lat/lon readout under the slider
                     Text(String(format: "%.5f, %.5f", pinned.latitude, pinned.longitude))
@@ -100,7 +111,7 @@ struct GeofencePickerSheet: View {
         }
         .formStyle(.grouped)
         // LAYOUT: keep the form compact so the map takes the most space
-        .frame(maxHeight: 260)
+        .frame(maxHeight: 320)
     }
 
     // MARK: - Toolbar
@@ -115,7 +126,7 @@ struct GeofencePickerSheet: View {
         ToolbarItem(placement: .confirmationAction) {
             Button("Save") {
                 if let pinned, !name.isEmpty {
-                    onSave(name, pinned, radius)
+                    onSave(name, pinned, radius, GeofenceStyle.hex(from: color), symbol)
                     dismiss()
                 }
             }

@@ -15,11 +15,12 @@ struct teslaDashcamViewerApp: App {
     var sharedModelContainer: ModelContainer = {
         let useICloud = UserDefaults.standard.bool(forKey: iCloudSyncDefaultsKey)
 
-        // Event + Geofence are syncable; VideoRecording stays local because it
-        // holds security-scoped URLs and bookmarks that don't translate across devices.
+        // Event + Geofence + Watchlist are syncable; VideoRecording stays local
+        // because it holds security-scoped URLs and bookmarks that don't
+        // translate across devices.
         let cloudConfig = ModelConfiguration(
             "MetadataStore",
-            schema: Schema([Event.self, Geofence.self]),
+            schema: Schema([Event.self, Geofence.self, Watchlist.self]),
             isStoredInMemoryOnly: false,
             cloudKitDatabase: useICloud ? .automatic : .none
         )
@@ -32,7 +33,7 @@ struct teslaDashcamViewerApp: App {
 
         do {
             return try ModelContainer(
-                for: Event.self, Geofence.self, VideoRecording.self,
+                for: Event.self, Geofence.self, Watchlist.self, VideoRecording.self,
                 configurations: cloudConfig, localConfig
             )
         } catch {
@@ -40,13 +41,13 @@ struct teslaDashcamViewerApp: App {
             print("CloudKit-backed container failed (\(error)); falling back to local store.")
             let fallbackCloud = ModelConfiguration(
                 "MetadataStore",
-                schema: Schema([Event.self, Geofence.self]),
+                schema: Schema([Event.self, Geofence.self, Watchlist.self]),
                 isStoredInMemoryOnly: false,
                 cloudKitDatabase: .none
             )
             do {
                 return try ModelContainer(
-                    for: Event.self, Geofence.self, VideoRecording.self,
+                    for: Event.self, Geofence.self, Watchlist.self, VideoRecording.self,
                     configurations: fallbackCloud, localConfig
                 )
             } catch {

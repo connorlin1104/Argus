@@ -10,20 +10,30 @@ import SwiftUI
 
 // MARK: - Zone chip
 
-/// Green chip showing a matching geofence name (e.g. "Home").
-/// COLOR: green by design — change tint here if you want a different zone color.
+/// Pill chip showing a matching geofence name (e.g. "Home"). Tint and SF
+/// Symbol default to green / no-icon but can be overridden per-zone by the
+/// caller after looking up the matching Geofence via GeofenceStyle.
 struct ZoneChip: View {
     let zone: String
+    /// Per-zone color override (defaults to green when nil).
+    var tint: Color? = nil
+    /// Per-zone SF Symbol shown before the name (omitted when nil).
+    var symbol: String? = nil
+
     var body: some View {
-        Text(zone)
-            // FONT: tiny bold caption
-            .font(.caption2.bold())
-            // LAYOUT: pill padding
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            // COLOR: green text + green glass tint
-            .foregroundStyle(.green)
-            .liquidGlassChip(tint: .green)
+        let effectiveTint = tint ?? .green
+        HStack(spacing: 4) {
+            if let symbol {
+                Image(systemName: symbol)
+                    .font(.caption2)
+            }
+            Text(zone)
+                .font(.caption2.bold())
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .foregroundStyle(effectiveTint)
+        .liquidGlassChip(tint: effectiveTint)
     }
 }
 

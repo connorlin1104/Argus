@@ -31,6 +31,9 @@ enum EventsImportRunner {
         }
     }
 
+    /// Shared runner so the toolbar progress can outlive any single import call.
+    @MainActor static let autoSummaryRunner = AutoSummaryRunner()
+
     @MainActor
     private static func runImport(url: URL, modelContext: ModelContext) async {
         let didAccess = url.startAccessingSecurityScopedResource()
@@ -43,6 +46,7 @@ enum EventsImportRunner {
         let existingEventKeys = currentEventKeys(modelContext: modelContext)
 
         var tally = ImportTally()
+        var freshlyInserted: [Event] = []
 
         for event in imported.events {
             if existingEventKeys.contains(eventKey(event)) {
@@ -50,6 +54,7 @@ enum EventsImportRunner {
                 continue
             }
             modelContext.insert(event)
+            freshlyInserted.append(event)
             tally.insertedEvents += 1
         }
         for video in imported.videos {
@@ -67,6 +72,13 @@ enum EventsImportRunner {
             print("modelContext.save failed: \(error)")
         }
         print("Import: events +\(tally.insertedEvents)/-\(tally.skippedEvents), videos +\(tally.insertedVideos)/-\(tally.skippedVideos)")
+
+        // Optionally kick off on-device summarization for the newly imported
+        // events. Gated by the user's Settings toggle.
+        let opted = UserDefaults.standard.bool(forKey: SettingsView.summarizeOnImportKey)
+        if opted && EventSummarizer.isAvailable && !freshlyInserted.isEmpty {
+            autoSummaryRunner.run(events: freshlyInserted, modelContext: modelContext)
+        }
     }
 
     // MARK: - Dedupe sets

@@ -9,9 +9,15 @@
 //
 
 import SwiftUI
+import SwiftData
 
 struct EventRow: View {
     @Bindable var event: Event
+
+    /// Geofences are needed to look up the row's zone color/symbol.
+    @Query(sort: \Geofence.name) private var fences: [Geofence]
+    /// Watchlist for plate-match badges.
+    @Query private var watchlist: [Watchlist]
 
     // === Rename state ===
     @State private var isEditingName: Bool = false
@@ -123,11 +129,20 @@ struct EventRow: View {
         }
     }
 
-    /// Fourth line: zone + tag chips (when present).
+    /// Fourth line: zone + tag chips (when present) + optional watchlist badge.
     private var chipsLine: some View {
         HStack(spacing: 6) {
-            if !event.zone.isEmpty { ZoneChip(zone: event.zone) }
+            if !event.zone.isEmpty {
+                ZoneChip(
+                    zone: event.zone,
+                    tint: GeofenceStyle.color(forZone: event.zone, in: fences),
+                    symbol: GeofenceStyle.symbol(forZone: event.zone, in: fences)
+                )
+            }
             if event.tag != "unknown" { TagChip(tag: event.tag) }
+            if let match = WatchlistMatcher.match(event: event, in: watchlist) {
+                EventWatchlistBadge(entry: match)
+            }
         }
     }
 

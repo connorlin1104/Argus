@@ -93,29 +93,40 @@ struct VideoListView: View {
 
     // MARK: - Toolbar
 
-    /// BUTTON: "Analyze all" with linear progress while running.
+    /// BUTTON: "Scan clips" with linear progress + status text while running.
+    /// Runs on-device Vision detection to find people / vehicles / license
+    /// plates. Results are written back into each clip's markersJSON and
+    /// feed event tags + AI summaries. NOT an export.
     @ToolbarContentBuilder
     private var analyzeToolbar: some ToolbarContent {
         ToolbarItem {
             if videoAnalyzer.isAnalyzing {
-                // UI: progress chip — "(done/total)"
+                // UI: progress chip — "Scanning… 12/40" + per-task label
                 HStack(spacing: 8) {
                     ProgressView(value: videoAnalyzer.progress)
                         .progressViewStyle(.linear)
-                        // LAYOUT: progress bar width
                         .frame(width: 140)
-                    Text("\(videoAnalyzer.completedVideos)/\(videoAnalyzer.totalVideos)")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("Scanning \(videoAnalyzer.completedVideos)/\(videoAnalyzer.totalVideos)")
+                            .font(.caption.monospacedDigit())
+                        if !videoAnalyzer.currentTaskLabel.isEmpty {
+                            Text(videoAnalyzer.currentTaskLabel)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                    }
                 }
+                .help("Scanning clips for people, vehicles, and license plates. No files are exported — results power event tags, scores, and AI summaries.")
             } else {
                 Button {
                     runAnalysis()
                 } label: {
-                    // TEXT/ICON: analyze-all button
-                    Label("Analyze all", systemImage: "wand.and.stars")
+                    Label("Scan clips for people & plates", systemImage: "wand.and.stars")
                 }
                 .disabled(videos.isEmpty)
+                .help("Runs on-device Vision detection on every clip to find people, vehicles, and license plates. Results power event tags, scores, and AI summaries. No files are exported.")
             }
         }
     }

@@ -16,11 +16,20 @@ final class Geofence {
     var longitude: Double
     var radiusMeters: Double
 
-    init(name: String, latitude: Double, longitude: Double, radiusMeters: Double = 100) {
+    /// Hex color string (e.g. "#34C759"). Drives the row chip + map marker tint.
+    var colorHex: String = "#34C759"
+
+    /// SF Symbol used on the map marker for this zone.
+    var iconSymbol: String = "house.fill"
+
+    init(name: String, latitude: Double, longitude: Double, radiusMeters: Double = 100,
+         colorHex: String = "#34C759", iconSymbol: String = "house.fill") {
         self.name = name
         self.latitude = latitude
         self.longitude = longitude
         self.radiusMeters = radiusMeters
+        self.colorHex = colorHex
+        self.iconSymbol = iconSymbol
     }
 
     func distanceMeters(to lat: Double, lon: Double) -> Double {

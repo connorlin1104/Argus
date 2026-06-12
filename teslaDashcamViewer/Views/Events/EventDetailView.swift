@@ -49,6 +49,12 @@ struct EventDetailView: View {
     /// Videos whose recording window covers this event's timestamp.
     @Query private var matchedVideos: [VideoRecording]
 
+    /// Geofences for header zone-chip styling.
+    @Query(sort: \Geofence.name) private var fences: [Geofence]
+
+    /// Watchlist for plate-match badge in the header.
+    @Query private var watchlist: [Watchlist]
+
     init(event: Event) {
         self.event = event
         let t = event.timestamp
@@ -172,6 +178,7 @@ struct EventDetailView: View {
                 EventMetadataSection(event: event)
                 EventMiniMapSection(event: event)
                     .frame(height: 220)
+                EventTripSection(event: event)
                 EventNotesSection(event: event)
                     .frame(minHeight: 160)
             }
@@ -206,6 +213,8 @@ struct EventDetailView: View {
                 EventMiniMapSection(event: event)
                     .frame(width: miniMapSize)
             }
+            // UI: trip context (sibling events in the same drive).
+            EventTripSection(event: event)
             // LAYOUT: Notes is the only flexible section — it absorbs any slack
             // so the other cards keep their natural sizes.
             EventNotesSection(event: event)
@@ -327,9 +336,18 @@ struct EventDetailView: View {
     private var headerChips: some View {
         // UI: header chip row
         HStack(spacing: 6) {
-            if !event.zone.isEmpty { ZoneChip(zone: event.zone) }
+            if !event.zone.isEmpty {
+                ZoneChip(
+                    zone: event.zone,
+                    tint: GeofenceStyle.color(forZone: event.zone, in: fences),
+                    symbol: GeofenceStyle.symbol(forZone: event.zone, in: fences)
+                )
+            }
             if event.tag != "unknown" { TagChip(tag: event.tag) }
             if event.interestingnessScore > 0 { ScoreBadge(score: event.interestingnessScore) }
+            if let match = WatchlistMatcher.match(event: event, in: watchlist) {
+                EventWatchlistBadge(entry: match)
+            }
             Spacer()
         }
     }

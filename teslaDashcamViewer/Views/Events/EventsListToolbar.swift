@@ -9,7 +9,7 @@
 import SwiftUI
 import SwiftData
 
-/// Right-click menu on a row: favorite / archive / delete.
+/// Right-click menu on a row: favorite / archive / share / delete.
 struct EventRowContextMenu: View {
     @Environment(\.modelContext) private var modelContext
     let event: Event
@@ -29,6 +29,10 @@ struct EventRowContextMenu: View {
             Label(event.isArchived ? "Unarchive" : "Archive",
                   systemImage: event.isArchived ? "tray.and.arrow.up" : "archivebox")
         }
+        Divider()
+        // BUTTON: share / quick-look via EventShareMenu
+        EventShareMenu(event: event)
+        Divider()
         // BUTTON: delete (context menu)
         Button(role: .destructive) {
             modelContext.delete(event)
@@ -43,7 +47,7 @@ struct EventsFilterMenu: ToolbarContent {
     @Binding var favoritesOnly: Bool
     @Binding var showArchived: Bool
     @Binding var tagFilter: String
-    @Binding var sortMode: EventsListView.SortMode
+    @Binding var sortMode: EventsListFilterState.SortMode
 
     var body: some ToolbarContent {
         // BUTTON: filter menu (funnel icon)
@@ -60,7 +64,7 @@ struct EventsFilterMenu: ToolbarContent {
                     }
                 }
                 Picker("Sort by", selection: $sortMode) {
-                    ForEach(EventsListView.SortMode.allCases) { Text($0.label).tag($0) }
+                    ForEach(EventsListFilterState.SortMode.allCases) { Text($0.label).tag($0) }
                 }
             } label: {
                 Label("Filter", systemImage: "line.3.horizontal.decrease.circle")

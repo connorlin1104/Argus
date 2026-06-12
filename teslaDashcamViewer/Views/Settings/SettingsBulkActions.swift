@@ -24,6 +24,23 @@ enum SettingsBulkActions {
         }
     }
 
+    // MARK: - Trip grouping
+
+    /// Re-cluster every event into trips based on time + location gaps.
+    static func regroupTrips(events: [Event]) {
+        TripGrouper.regroup(events: events)
+    }
+
+    // MARK: - AI summary backfill
+
+    /// Kick off an AutoSummaryRunner over every event without a summary.
+    @MainActor
+    static func summarizeAll(events: [Event],
+                             modelContext: ModelContext,
+                             runner: AutoSummaryRunner) {
+        runner.run(events: events, modelContext: modelContext)
+    }
+
     // MARK: - Dedupe
 
     /// Remove duplicate events (by source|camera|timestamp-sec) and duplicate

@@ -47,6 +47,9 @@ final class Event {
     /// humanized trigger reason. Empty string means "use the default reason".
     var customName: String = ""
 
+    /// Trip cluster this event belongs to. Stamped by TripGrouper.
+    var tripID: UUID? = nil
+
     init(source: String, camera: String, city: String, estLatitude: String, estLongitude: String, reason: String, timestamp: Date, interestingnessScore: Double = 0, tag: String = "unknown", summary: String = "") {
         self.source = source
         self.camera = camera
