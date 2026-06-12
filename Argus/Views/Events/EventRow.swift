@@ -93,7 +93,9 @@ struct EventRow: View {
                 .font(.title3.weight(.semibold))
                 .focused($nameFieldFocused)
                 .onSubmit(commitRename)
+                #if os(macOS)
                 .onExitCommand { cancelRename() }
+                #endif
                 .onAppear { nameFieldFocused = true }
                 .onChange(of: nameFieldFocused) { _, focused in
                     // Commit when the field loses focus (click outside).

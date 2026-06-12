@@ -39,7 +39,9 @@ struct EventNameSection: View {
                     .minimumScaleFactor(0.3)
                     .focused($fieldFocused)
                     .onSubmit { commit() }
+                    #if os(macOS)
                     .onExitCommand { cancel() }
+                    #endif
                     .onAppear { fieldFocused = true }
                     .onChange(of: fieldFocused) { _, focused in
                         if !focused && isEditing { commit() }
