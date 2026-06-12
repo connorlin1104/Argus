@@ -60,13 +60,16 @@ final class EventsListFilterState {
         }
     }
 
-    /// Apply every filter and sort to the @Query results.
-    func apply(to events: [Event]) -> [Event] {
+    /// Apply every filter and sort to the @Query results. `fences` powers
+    /// the At Home / At Work chips — those match by the icon family of the
+    /// matching fence, not the literal zone name, so "Dad's house" with
+    /// the house icon still falls under "At Home".
+    func apply(to events: [Event], fences: [Geofence] = []) -> [Event] {
         var result = events
         if !showArchived       { result = result.filter { !$0.isArchived } }
         if favoritesOnly       { result = result.filter { $0.isFavorite } }
         if tagFilter != "all"  { result = result.filter { $0.tag == tagFilter } }
-        result = applySmartFilter(result)
+        result = applySmartFilter(result, fences: fences)
         if !searchText.isEmpty {
             result = result.filter { EventSearchMatcher.matches(event: $0, query: searchText) }
         }
@@ -78,15 +81,19 @@ final class EventsListFilterState {
         return result
     }
 
-    private func applySmartFilter(_ events: [Event]) -> [Event] {
+    private func applySmartFilter(_ events: [Event], fences: [Geofence]) -> [Event] {
         switch smartFilter {
         case .all:         return events
         case .starred:     return events.filter { $0.isFavorite }
         case .thisWeek:
             let cutoff = Date().addingTimeInterval(-7 * 24 * 60 * 60)
             return events.filter { $0.timestamp >= cutoff }
-        case .atHome:      return events.filter { $0.zone.caseInsensitiveCompare("Home") == .orderedSame }
-        case .atWork:      return events.filter { $0.zone.caseInsensitiveCompare("Work") == .orderedSame }
+        case .atHome:
+            let names = GeofenceCategory.homeZoneNames(in: fences)
+            return events.filter { names.contains($0.zone) }
+        case .atWork:
+            let names = GeofenceCategory.workZoneNames(in: fences)
+            return events.filter { names.contains($0.zone) }
         case .outsideZone: return events.filter { $0.zone.isEmpty }
         }
     }

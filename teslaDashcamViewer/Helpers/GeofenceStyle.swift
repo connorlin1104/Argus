@@ -74,4 +74,53 @@ enum GeofenceStyle {
         "house.fill", "briefcase.fill", "cart.fill", "fork.knife", "graduationcap.fill",
         "heart.fill", "star.fill", "mappin.and.ellipse", "building.2.fill", "figure.run"
     ]
+
+    /// Friendly display name shown for each palette symbol. Hides the raw
+    /// SF Symbol id (e.g. "house.fill") from users in pickers.
+    static func displayName(for symbol: String) -> String {
+        switch symbol {
+        case "house.fill":         return "House"
+        case "briefcase.fill":     return "Briefcase"
+        case "cart.fill":          return "Shopping"
+        case "fork.knife":         return "Restaurant"
+        case "graduationcap.fill": return "School"
+        case "heart.fill":         return "Heart"
+        case "star.fill":          return "Star"
+        case "mappin.and.ellipse": return "Pin"
+        case "building.2.fill":    return "Building"
+        case "figure.run":         return "Running"
+        default:                   return symbol.capitalized
+        }
+    }
+}
+
+/// Maps each geofence's chosen SF Symbol into a semantic category. Used by
+/// the smart-filter chip bar so "At Home" / "At Work" can match a user's
+/// zones by intent (the icon they picked) rather than by literal name.
+enum GeofenceCategory {
+    /// Icons the user picks for residence-like zones.
+    static let homeSymbols: Set<String> = ["house.fill", "heart.fill"]
+
+    /// Icons the user picks for workplace / school / office zones.
+    static let workSymbols: Set<String> = [
+        "briefcase.fill", "graduationcap.fill", "building.2.fill"
+    ]
+
+    static func isHomeLike(_ fence: Geofence) -> Bool {
+        homeSymbols.contains(fence.iconSymbol)
+    }
+
+    static func isWorkLike(_ fence: Geofence) -> Bool {
+        workSymbols.contains(fence.iconSymbol)
+    }
+
+    /// Names of every fence whose icon belongs to the home-like group.
+    static func homeZoneNames(in fences: [Geofence]) -> Set<String> {
+        Set(fences.filter(isHomeLike).map(\.name))
+    }
+
+    /// Names of every fence whose icon belongs to the work-like group.
+    static func workZoneNames(in fences: [Geofence]) -> Set<String> {
+        Set(fences.filter(isWorkLike).map(\.name))
+    }
 }

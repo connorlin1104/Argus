@@ -94,7 +94,8 @@ struct GeofencePickerSheet: View {
                 ColorPicker("Tint", selection: $color, supportsOpacity: false)
                 Picker("Icon", selection: $symbol) {
                     ForEach(GeofenceStyle.symbolPalette, id: \.self) { sym in
-                        Label(sym, systemImage: sym).tag(sym)
+                        Label(GeofenceStyle.displayName(for: sym), systemImage: sym)
+                            .tag(sym)
                     }
                 }
                 if let pinned {

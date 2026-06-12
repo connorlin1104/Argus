@@ -27,6 +27,10 @@ struct EventsListView: View {
     @Query(sort: [SortDescriptor(\Event.timestamp, order: .reverse)])
     private var events: [Event]
 
+    /// Needed by the At Home / At Work smart-filter chips so they can map
+    /// the user's zone names to the icon family the user picked.
+    @Query(sort: \Geofence.name) private var fences: [Geofence]
+
     // === Extracted state ===
     @State private var filterState = EventsListFilterState()
     @State private var selection = EventsListSelection()
@@ -45,7 +49,7 @@ struct EventsListView: View {
     // MARK: - Filter pipeline
 
     var filteredEvents: [Event] {
-        filterState.apply(to: events)
+        filterState.apply(to: events, fences: fences)
     }
 
     // MARK: - Body
@@ -97,15 +101,40 @@ struct EventsListView: View {
 
     // MARK: - Empty state
 
+    /// Hero layout shown when no events have been imported. Larger artwork
+    /// and a prominent primary action — the top-right toolbar import button
+    /// is too small to discover on first launch.
     private var emptyState: some View {
-        ContentUnavailableView {
-            Label("No events yet", systemImage: "tray")
-        } description: {
-            Text("Import a folder of Tesla Sentry event exports to get started.")
-        } actions: {
-            Button("Import…") { showImportView = true }
-                .buttonStyle(.borderedProminent)
+        VStack(spacing: 18) {
+            Spacer(minLength: 0)
+            Image(systemName: "tray.and.arrow.down.fill")
+                .font(.system(size: 72))
+                .foregroundStyle(.tint)
+                .symbolRenderingMode(.hierarchical)
+            Text("No events yet")
+                .font(.largeTitle.bold())
+            Text("Drop in a Tesla Sentry folder from your USB drive. We'll pull every clip, location, and trigger reason in automatically.")
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: 480)
+                .padding(.horizontal, 24)
+            Button {
+                showImportView = true
+            } label: {
+                Label("Import Sentry folder", systemImage: "square.and.arrow.down")
+                    .font(.title3.weight(.semibold))
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 6)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .padding(.top, 6)
+            Text("You can also tap the import icon in the top-right corner anytime.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+            Spacer(minLength: 0)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: - Populated content
