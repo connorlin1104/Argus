@@ -55,10 +55,21 @@ struct EventsListView: View {
             content
                 .navigationTitle("Events")
                 #if os(macOS)
-                .navigationSubtitle("\(filteredEvents.count) of \(events.count)")
+                .navigationSubtitle(events.isEmpty
+                    ? ""
+                    : "\(filteredEvents.count) of \(events.count)")
                 #endif
                 .navigationDestination(for: Event.self) { event in
                     EventDetailView(event: event)
+                }
+                // LAYOUT: Apply the same modifiers in both states so the
+                // navigation bar reserves identical space — otherwise the
+                // search-bar height delta makes the tab bar appear shifted
+                // between empty and populated states.
+                .searchable(text: $filterState.searchText, prompt: "Search city, plate, summary, name…")
+                .toolbar { toolbarContent }
+                .fileImporter(isPresented: $showImportView, allowedContentTypes: [.directory]) { result in
+                    EventsImportRunner.handle(result: result, modelContext: modelContext)
                 }
         }
         .environment(\.openEvent, OpenEventAction { event in
@@ -95,30 +106,25 @@ struct EventsListView: View {
             Button("Import…") { showImportView = true }
                 .buttonStyle(.borderedProminent)
         }
-        .toolbar { EventsImportToolbar(showImportView: $showImportView) }
-        .fileImporter(isPresented: $showImportView, allowedContentTypes: [.directory]) { result in
-            EventsImportRunner.handle(result: result, modelContext: modelContext)
-        }
     }
 
     // MARK: - Populated content
 
     /// Smart-filter bar is rendered above the list/empty-results pane so it
     /// stays visible (and tappable) when a chip filters to zero results —
-    /// otherwise the user has no way to undo the filter.
+    /// otherwise the user has no way to undo the filter. The empty-results
+    /// pane is stretched to .infinity so the chip bar stays pinned at the
+    /// top (matching List's greedy fill); without that, the VStack
+    /// shrink-wraps and the chips drift toward the screen's center.
     private var populatedContent: some View {
         VStack(spacing: 0) {
             EventsSmartFilterBar(state: filterState)
             if filteredEvents.isEmpty {
                 ContentUnavailableView.search
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 listBody
             }
-        }
-        .searchable(text: $filterState.searchText, prompt: "Search city, plate, summary, name…")
-        .toolbar { toolbarContent }
-        .fileImporter(isPresented: $showImportView, allowedContentTypes: [.directory]) { result in
-            EventsImportRunner.handle(result: result, modelContext: modelContext)
         }
     }
 
@@ -150,39 +156,41 @@ struct EventsListView: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        #if os(iOS)
-        ToolbarItem(placement: .navigationBarTrailing) {
-            Button(selection.isSelecting ? "Done" : "Select") {
-                if selection.isSelecting { selection.clear() }
-                else { selection.isSelecting = true }
-            }
-        }
-        #else
-        ToolbarItem {
-            Button(selection.isSelecting ? "Done selecting" : "Select") {
-                if selection.isSelecting { selection.clear() }
-                else { selection.isSelecting = true }
-            }
-        }
-        #endif
-
-        if selection.isSelecting && !selection.selectedIDs.isEmpty {
-            ToolbarItem {
-                Button {
-                    runExport()
-                } label: {
-                    Label("Export selected (\(selection.selectedIDs.count))",
-                          systemImage: "square.and.arrow.up.on.square")
+        if !events.isEmpty {
+            #if os(iOS)
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button(selection.isSelecting ? "Done" : "Select") {
+                    if selection.isSelecting { selection.clear() }
+                    else { selection.isSelecting = true }
                 }
             }
-        }
+            #else
+            ToolbarItem {
+                Button(selection.isSelecting ? "Done selecting" : "Select") {
+                    if selection.isSelecting { selection.clear() }
+                    else { selection.isSelecting = true }
+                }
+            }
+            #endif
 
-        EventsFilterMenu(
-            favoritesOnly: $filterState.favoritesOnly,
-            showArchived: $filterState.showArchived,
-            tagFilter: $filterState.tagFilter,
-            sortMode: $filterState.sortMode
-        )
+            if selection.isSelecting && !selection.selectedIDs.isEmpty {
+                ToolbarItem {
+                    Button {
+                        runExport()
+                    } label: {
+                        Label("Export selected (\(selection.selectedIDs.count))",
+                              systemImage: "square.and.arrow.up.on.square")
+                    }
+                }
+            }
+
+            EventsFilterMenu(
+                favoritesOnly: $filterState.favoritesOnly,
+                showArchived: $filterState.showArchived,
+                tagFilter: $filterState.tagFilter,
+                sortMode: $filterState.sortMode
+            )
+        }
         EventsImportToolbar(showImportView: $showImportView)
     }
 
