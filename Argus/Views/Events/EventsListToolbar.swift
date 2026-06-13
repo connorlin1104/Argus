@@ -9,10 +9,13 @@
 import SwiftUI
 import SwiftData
 
-/// Right-click menu on a row: favorite / archive / share / delete.
+/// Right-click / long-press menu on a row: favorite / rename / archive / share / delete.
+/// Rename is wired through a closure so the parent can drive an alert with a
+/// TextField — context menus can't host inline text editing themselves.
 struct EventRowContextMenu: View {
     @Environment(\.modelContext) private var modelContext
     let event: Event
+    var onRename: (() -> Void)? = nil
 
     var body: some View {
         // BUTTON: favorite toggle (context menu)
@@ -21,6 +24,14 @@ struct EventRowContextMenu: View {
         } label: {
             Label(event.isFavorite ? "Unfavorite" : "Favorite",
                   systemImage: event.isFavorite ? "star.slash" : "star")
+        }
+        // BUTTON: rename (context menu) — parent presents the rename alert.
+        if let onRename {
+            Button {
+                onRename()
+            } label: {
+                Label("Rename…", systemImage: "pencil")
+            }
         }
         // BUTTON: archive toggle (context menu)
         Button {

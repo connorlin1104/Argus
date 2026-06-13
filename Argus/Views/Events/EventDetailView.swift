@@ -41,7 +41,11 @@ struct EventDetailView: View {
     /// LAYOUT: drives single-column stacking on iPhone-width screens.
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
     private var isCompact: Bool { horizontalSizeClass == .compact }
+    /// LAYOUT: iPhone in landscape collapses to verticalSizeClass == .compact.
+    /// Used to hide the tab bar so the player fills the screen.
+    private var isLandscape: Bool { verticalSizeClass == .compact }
     #else
     private var isCompact: Bool { false }
     #endif
@@ -101,7 +105,7 @@ struct EventDetailView: View {
             }
         }
         .onAppear { logMatches() }
-        .navigationTitle(event.timestamp.formatted(date: .abbreviated, time: .shortened))
+        .navigationTitle(navigationTitleText)
         #if os(macOS)
         .navigationSubtitle({
             let n = TeslaCamera.displayName(for: event.camera)
@@ -110,8 +114,27 @@ struct EventDetailView: View {
         #endif
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
+        // LAYOUT: iPhone landscape gives us a true full-screen player surface,
+        // so the tab bar at the bottom only steals pixels. Hide it while we're
+        // in landscape; SwiftUI restores it on rotation back / pop.
+        .toolbar(isLandscape ? .hidden : .automatic, for: .tabBar)
         #endif
         .toolbar { toolbarContent }
+    }
+
+    /// TEXT: title shown in the navigation bar.
+    /// iOS swaps the timestamp for the event name so users see what they tapped
+    /// into; the in-page EventNameSection card was visually too heavy on iPhone.
+    /// macOS keeps the timestamp because the window's title bar already shows
+    /// the navigationSubtitle (camera name) — together they read like metadata.
+    private var navigationTitleText: String {
+        #if os(iOS)
+        if !event.customName.isEmpty { return event.customName }
+        if !event.reason.isEmpty { return EventSummarizer.humanizeReason(event.reason) }
+        return "Untitled event"
+        #else
+        return event.timestamp.formatted(date: .abbreviated, time: .shortened)
+        #endif
     }
 
     /// macOS / iPad regular-width layout — info card column hugs the left, player hugs the right.
@@ -158,18 +181,17 @@ struct EventDetailView: View {
     }
 
     /// iPhone / compact-width layout — single scrollable column.
-    /// Player on top (with its own transport bar), name directly below the
-    /// timeline, then chips + camera buttons + summary + details + mini map +
-    /// notes. Notes drops its height-matching behavior here since the page
-    /// scrolls naturally.
+    /// Player on top (with its own transport bar), then chips + camera buttons +
+    /// summary + details + mini map + notes. The event name lives in the
+    /// navigation bar instead of inline; Notes drops its height-matching
+    /// behavior here since the page scrolls naturally.
     @ViewBuilder
     private var compactBody: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
-                // LAYOUT: name sits at the very top on iOS so the user sees it
-                // first before scrolling through the player.
-                EventNameSection(event: event)
-
+                // LAYOUT: name moved to the navigation bar on iOS — the inline
+                // card here read too heavy on iPhone. Renaming lives in the
+                // events-list long-press menu (EventRowContextMenu).
                 rightPlayerColumn
                     .frame(maxWidth: .infinity)
 

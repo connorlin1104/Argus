@@ -18,6 +18,12 @@ import SwiftData
 
 struct VideoListView: View {
     @Environment(\.modelContext) private var modelContext
+    #if os(iOS)
+    /// LAYOUT: iPhone landscape gives the popup card a near-full-screen surface,
+    /// so the tab bar at the bottom is dead pixels. Detect it via verticalSizeClass.
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+    private var isLandscape: Bool { verticalSizeClass == .compact }
+    #endif
     @State private var videoAnalyzer = VideoAnalyzer()
     @State private var playingVideo: VideoRecording?
     var eventTime: Date?
@@ -62,6 +68,11 @@ struct VideoListView: View {
             }
         }
         .animation(.easeInOut(duration: 0.15), value: playingVideo)
+        #if os(iOS)
+        // LAYOUT: hide the tab bar while the popup card is up in landscape so
+        // the video isn't fighting the tab strip for screen space.
+        .toolbar(playingVideo != nil && isLandscape ? .hidden : .automatic, for: .tabBar)
+        #endif
     }
 
     /// Centered modal: dimmed backdrop + PlayerSheet card. Tapping the

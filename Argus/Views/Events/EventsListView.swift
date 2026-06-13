@@ -49,6 +49,12 @@ struct EventsListView: View {
     /// NAV: typed path for the events tab. Push events with `path.append(event)`.
     @State private var path: [Event] = []
 
+    // === Rename (long-press context menu) ===
+    /// UI: event currently being renamed via the row long-press / right-click menu.
+    /// Drives the rename alert below.
+    @State private var renamingEvent: Event? = nil
+    @State private var renameDraft: String = ""
+
     // MARK: - Filter pipeline
 
     var filteredEvents: [Event] {
@@ -99,6 +105,14 @@ struct EventsListView: View {
                 exportedURL: $exportedZipURL,
                 onDismiss: { exportInProgress = false }
             )
+        }
+        .alert("Rename event", isPresented: Binding(
+            get: { renamingEvent != nil },
+            set: { if !$0 { renamingEvent = nil } }
+        )) {
+            TextField("Name this event", text: $renameDraft)
+            Button("Save") { commitRename() }
+            Button("Cancel", role: .cancel) { renamingEvent = nil }
         }
     }
 
@@ -221,7 +235,9 @@ struct EventsListView: View {
                 .onTapGesture {
                     if !selection.isSelecting { path.append(event) }
                 }
-                .contextMenu { EventRowContextMenu(event: event) }
+                .contextMenu {
+                    EventRowContextMenu(event: event, onRename: { beginRename(event) })
+                }
         }
     }
 
@@ -272,6 +288,26 @@ struct EventsListView: View {
         #else
         EventsImportToolbar(showImportView: $showImportView)
         #endif
+    }
+
+    // MARK: - Rename
+
+    /// Pre-fills the draft with the current display name so users edit from a
+    /// familiar baseline, then opens the rename alert.
+    private func beginRename(_ event: Event) {
+        let original = event.reason.isEmpty ? "" : EventSummarizer.humanizeReason(event.reason)
+        renameDraft = event.customName.isEmpty ? original : event.customName
+        renamingEvent = event
+    }
+
+    /// Treat blank or "matches the auto-generated label" as "no custom name"
+    /// so we don't shadow future humanizeReason changes with a frozen copy.
+    private func commitRename() {
+        guard let event = renamingEvent else { return }
+        let trimmed = renameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let original = event.reason.isEmpty ? "" : EventSummarizer.humanizeReason(event.reason)
+        event.customName = (trimmed.isEmpty || trimmed == original) ? "" : trimmed
+        renamingEvent = nil
     }
 
     // MARK: - Export
