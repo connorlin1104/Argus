@@ -38,33 +38,20 @@ enum EventSummarizer {
                 return deterministicSummary(facts: factsBlock)
             }
             let instructions = """
-            You analyze Tesla Sentry Mode dashcam events and write a short, factual \
-            summary for the vehicle owner. You receive structured facts gathered from \
-            on-device computer vision and the Tesla event metadata.
+            You write a 2–3 sentence summary of a Tesla Sentry Mode event for \
+            the vehicle owner, using only the supplied facts.
 
-            STRICT GROUNDING — read first:
-            - Describe ONLY what appears in the facts. Do not invent scene content. \
-              In particular: do not mention passengers, drivers, gestures, gazes, \
-              emotions, intentions, conversations, dialog, traffic, pedestrians, \
-              weather, time of day, or any activity that is not explicitly listed \
-              in the facts.
-            - If the facts contain no detection data (no people, vehicle, or plate \
-              counts), do NOT describe the video's contents at all. Instead, write \
-              just 1–2 sentences stating only the trigger reason, the camera, the \
-              time, and the location — whichever of those are provided. Explicitly \
-              say that no on-device analysis has been run yet.
-            - If detection facts ARE provided, write 3 to 5 sentences covering: \
-              what the detections imply (presence durations, distances, plates), \
-              severity (casual passerby vs. lingering vs. deliberate approach vs. \
-              contact vs. vehicle-only), and concrete signals to follow up on.
-
-            Style:
-            - Refer to cameras by name (Front, Rear, Left, Right). If the triggering \
-              camera isn't given, say "one of the cameras" — never invent a camera id.
-            - Convert presence durations and distances into natural phrases ("lingered \
-              for about 12 seconds", "came within roughly 1.8 meters").
-            - If a field is missing, just omit it; do not write "unknown" or "N/A".
-            - Plain prose, no bullet lists, no markdown.
+            Rules:
+            - Use only facts listed. Do not invent passengers, gestures, emotions, \
+              dialog, weather, time of day, or anything not in the facts.
+            - If no detection facts are given, write one sentence noting the trigger, \
+              camera, and place, then say on-device analysis has not been run.
+            - Never repeat raw units like milliseconds, "ms", frame counts, \
+              "bbox", or 0-to-1 scores. Use plain English ("about 30 seconds", \
+              "roughly 2 meters"). Round to whole numbers.
+            - Name cameras as Front, Rear, Left, or Right. If the camera is missing, \
+              say "one of the cameras".
+            - Plain prose, 2–3 sentences, no bullet lists, no markdown, no headings.
             """
             let session = LanguageModelSession(instructions: instructions)
             do {
@@ -100,27 +87,52 @@ enum EventSummarizer {
             lines.append("- automatic behavior tag: \(event.tag)")
         }
         if let d = detection {
-            lines.append("- detected people frames: \(d.humanCount)")
+            if d.humanCount > 0 {
+                lines.append("- person visible: yes")
+            }
             if let close = d.closestHumanMeters {
-                lines.append(String(format: "- closest human approach: %.1f m", close))
+                lines.append("- closest approach: about \(formatMeters(close))")
             }
             if d.humanPresenceSeconds > 0 {
-                lines.append(String(format: "- continuous human presence: %.1f s", d.humanPresenceSeconds))
+                lines.append("- person stayed in view for about \(formatSeconds(d.humanPresenceSeconds))")
             }
             if d.meanHumanMotion > 0 {
-                lines.append(String(format: "- average bbox motion (0-1): %.3f", d.meanHumanMotion))
+                // Categorical only — never expose the raw 0-1 score to the model.
+                lines.append("- movement: \(d.meanHumanMotion > 0.05 ? "active" : "mostly still")")
             }
             if d.vehicleCount > 0 {
-                lines.append("- frames containing other vehicles: \(d.vehicleCount)")
+                lines.append("- other vehicles visible: yes")
             }
             if d.plateCount > 0 {
-                lines.append("- license plate readings: \(d.plateCount)")
+                lines.append("- license plate visible: yes")
             }
             if let plate = d.firstPlateText {
-                lines.append("- first plate text observed: \(plate)")
+                lines.append("- plate read: \(plate)")
             }
         }
         return lines.joined(separator: "\n")
+    }
+
+    /// Round meters to the nearest half so the model sees "about 2 meters"
+    /// instead of "1.83 meters".
+    private static func formatMeters(_ meters: Double) -> String {
+        let rounded = (meters * 2).rounded() / 2
+        if rounded == rounded.rounded() {
+            return "\(Int(rounded)) meters"
+        }
+        return String(format: "%.1f meters", rounded)
+    }
+
+    /// Convert raw seconds into a human-readable duration so the model can't
+    /// echo back milliseconds or oddly precise decimals.
+    private static func formatSeconds(_ seconds: Double) -> String {
+        if seconds < 1 { return "under a second" }
+        if seconds < 60 {
+            let whole = Int(seconds.rounded())
+            return "\(whole) second\(whole == 1 ? "" : "s")"
+        }
+        let minutes = Int((seconds / 60).rounded())
+        return "\(minutes) minute\(minutes == 1 ? "" : "s")"
     }
 
     /// Map raw Tesla reason codes to human-readable phrases.

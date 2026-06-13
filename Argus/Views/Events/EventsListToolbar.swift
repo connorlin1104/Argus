@@ -74,17 +74,42 @@ struct EventsFilterMenu: ToolbarContent {
 }
 
 /// "Import" button used on both the empty state and the populated list.
+///
+/// On iOS the toolbar item is a menu: the system folder picker doesn't
+/// surface an "Open" affordance for all storage providers (e.g. USB / SD
+/// readers), so we offer an "Import individual files" fallback alongside it.
+/// macOS keeps the single folder-picker button since its picker works.
 struct EventsImportToolbar: ToolbarContent {
     @Binding var showImportView: Bool
+    #if os(iOS)
+    @Binding var showImportFilesView: Bool
+    #endif
 
     var body: some ToolbarContent {
         // BUTTON: import (top-right cloud-arrow icon)
         ToolbarItem {
+            #if os(iOS)
+            Menu {
+                Button {
+                    showImportView = true
+                } label: {
+                    Label("Import folder…", systemImage: "folder")
+                }
+                Button {
+                    showImportFilesView = true
+                } label: {
+                    Label("Import individual files…", systemImage: "doc.on.doc")
+                }
+            } label: {
+                Label("Import", systemImage: "square.and.arrow.down")
+            }
+            #else
             Button {
                 showImportView = true
             } label: {
                 Label("Import", systemImage: "square.and.arrow.down")
             }
+            #endif
         }
     }
 }

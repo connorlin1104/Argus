@@ -41,45 +41,76 @@ enum VideoAnalysisRunner {
             }
             video.setMarkers(markers)
 
-            if let proximityMs = analyzer.firstProximityEvent(in: detections),
+            if analyzer.firstProximityEvent(in: detections) != nil,
                let startTime {
-                let event = buildEvent(
-                    cameraName: cameraName,
-                    startTime: startTime,
-                    summary: summary,
-                    tag: tag,
-                    proximityMs: proximityMs
-                )
-                let llmSummary = await EventSummarizer.summarize(event: event, detection: summary)
-                event.summary = llmSummary
-                modelContext.insert(event)
+                // Dedupe: if an existing event's timestamp falls within this
+                // video's recording window, enrich it instead of inserting a
+                // duplicate. Imported Sentry events already cover the incident;
+                // the scan just adds the score/tag/AI summary.
+                if let existing = existingEvent(
+                    inWindow: startTime...video.endTime,
+                    modelContext: modelContext
+                ) {
+                    if summary.score > existing.interestingnessScore {
+                        existing.interestingnessScore = summary.score
+                    }
+                    if existing.tag == "unknown" {
+                        existing.tag = tag.rawValue
+                    }
+                    if existing.summary.isEmpty {
+                        existing.summary = await EventSummarizer.summarize(
+                            event: existing,
+                            detection: summary
+                        )
+                    }
+                } else {
+                    let event = buildEvent(
+                        cameraName: cameraName,
+                        startTime: startTime,
+                        summary: summary,
+                        tag: tag
+                    )
+                    event.summary = await EventSummarizer.summarize(event: event, detection: summary)
+                    modelContext.insert(event)
+                }
                 do { try modelContext.save() } catch { print("save failed: \(error)") }
             }
             analyzer.tickBatch(label: "Done \(videoURL.lastPathComponent)")
         }
     }
 
-    /// Build the Event that gets inserted when a video trips the proximity check.
+    /// Look up an existing Event whose timestamp falls inside the given window.
+    /// Used to avoid creating scan-duplicates of imported Sentry events.
+    @MainActor
+    private static func existingEvent(
+        inWindow window: ClosedRange<Date>,
+        modelContext: ModelContext
+    ) -> Event? {
+        let lower = window.lowerBound
+        let upper = window.upperBound
+        let descriptor = FetchDescriptor<Event>(
+            predicate: #Predicate<Event> { event in
+                event.timestamp >= lower && event.timestamp <= upper
+            }
+        )
+        return (try? modelContext.fetch(descriptor))?.first
+    }
+
+    /// Build the Event that gets inserted when a video trips the proximity
+    /// check and no existing event covers this window. Reason is a short
+    /// human-readable phrase — detection metrics live on `interestingnessScore`
+    /// and the AI summary, not in the trigger label.
     private static func buildEvent(cameraName: String,
                                    startTime: Date,
                                    summary: DetectionSummary,
-                                   tag: EventTag,
-                                   proximityMs: Int) -> Event {
-        let closest = summary.closestHumanMeters ?? 0
-        var reason = String(
-            format: "human within %.1fm at %dms (presence %.1fs)",
-            closest, proximityMs, summary.humanPresenceSeconds
-        )
-        if let plate = summary.firstPlateText {
-            reason += " · plate \(plate)"
-        }
+                                   tag: EventTag) -> Event {
         return Event(
             source: "App",
             camera: cameraName,
             city: "unknown",
             estLatitude: "0",
             estLongitude: "0",
-            reason: reason,
+            reason: "Detected nearby person",
             timestamp: startTime,
             interestingnessScore: summary.score,
             tag: tag.rawValue

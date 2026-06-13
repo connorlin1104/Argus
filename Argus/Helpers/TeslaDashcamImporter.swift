@@ -63,10 +63,57 @@ func importEvents(url: URL) async -> ImportResult {
     return result
 }
 
+/// File-based importer used as the iOS fallback when the system folder picker
+/// won't surface an "Open" affordance for USB / SD storage providers. The
+/// caller is expected to have picked an `event.json` plus its sibling `.mp4`
+/// clips from a single Tesla event folder; we group by parent directory so
+/// multiple events selected in one picker session still cluster correctly.
+func importEventsFromFiles(urls: [URL]) async -> ImportResult {
+    var result = ImportResult()
+
+    var grouped: [URL: [URL]] = [:]
+    for url in urls {
+        grouped[url.deletingLastPathComponent(), default: []].append(url)
+    }
+
+    for (_, files) in grouped {
+        guard let eventJSONURL = files.first(where: { $0.lastPathComponent == "event.json" }) else {
+            // No event.json in this group — skip; we don't have enough
+            // metadata to construct an Event (camera/city/reason/timestamp).
+            continue
+        }
+        let mp4s = files.filter { $0.pathExtension.lowercased() == "mp4" }
+        if let (event, videos) = await importEvent(eventJSONURL: eventJSONURL, videoFiles: mp4s) {
+            result.events.append(event)
+            result.videos.append(contentsOf: videos)
+        }
+    }
+
+    return result
+}
+
 func importEvent(eventURL: URL, eventDirectory: URL) async -> (event: Event, videos: [VideoRecording])? {
+    let fileManager = FileManager.default
+    let videoURLs: [URL]
     do {
-        let fileManager = FileManager.default
-        let data = try Data(contentsOf: eventURL)
+        videoURLs = try fileManager.contentsOfDirectory(
+            at: eventDirectory,
+            includingPropertiesForKeys: nil,
+            options: []
+        ).filter { $0.pathExtension.lowercased() == "mp4" }
+    } catch {
+        print("importEvent enumerate error: \(error)")
+        return nil
+    }
+    return await importEvent(eventJSONURL: eventURL, videoFiles: videoURLs)
+}
+
+/// Shared event-construction path used by both the folder-based and
+/// file-based importers. Callers pass the `event.json` URL plus the list of
+/// `.mp4` files they want associated with it.
+func importEvent(eventJSONURL: URL, videoFiles: [URL]) async -> (event: Event, videos: [VideoRecording])? {
+    do {
+        let data = try Data(contentsOf: eventJSONURL)
         guard let jsonDict = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any] else {
             return nil
         }
@@ -95,18 +142,8 @@ func importEvent(eventURL: URL, eventDirectory: URL) async -> (event: Event, vid
                                 reason: reason,
                                 timestamp: timestamp)
 
-        let videoURLs = try fileManager.contentsOfDirectory(
-            at: eventDirectory,
-            includingPropertiesForKeys: nil,
-            options: []
-        )
         var videos: [VideoRecording] = []
-        for file in videoURLs {
-            if file.pathExtension != "mp4" {
-                //Skip files that are not mp4
-                continue
-            }
-
+        for file in videoFiles {
             let (parsedStart, cameraName) = parseFilename(file.lastPathComponent)
             guard let startTime = parsedStart else {
                 continue

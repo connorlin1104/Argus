@@ -158,9 +158,10 @@ struct EventDetailView: View {
     }
 
     /// iPhone / compact-width layout — single scrollable column.
-    /// Player on top (with its own transport bar), name + chips + summary +
-    /// camera buttons + details + mini map + notes stacked beneath. Notes drops
-    /// its height-matching behavior here since the page scrolls naturally.
+    /// Player on top (with its own transport bar), name directly below the
+    /// timeline, then chips + camera buttons + summary + details + mini map +
+    /// notes. Notes drops its height-matching behavior here since the page
+    /// scrolls naturally.
     @ViewBuilder
     private var compactBody: some View {
         ScrollView {
@@ -170,15 +171,16 @@ struct EventDetailView: View {
 
                 EventNameSection(event: event)
                 if hasHeader { headerChips }
-                EventSummarySection(event: event, isGenerating: $isGenerating)
                 cameraButtonsRows
+                EventSummarySection(event: event, isGenerating: $isGenerating)
                 // LAYOUT: on compact, Details and the mini map each get full
                 // width — the map drops below Details instead of sitting to
                 // its right.
                 EventMetadataSection(event: event)
+                // LAYOUT: on iOS let the map flex to the full column width —
+                // its own 1.1 aspect ratio sizes the height. Far easier to read
+                // than the fixed 220pt square the macOS layout uses.
                 EventMiniMapSection(event: event)
-                    .frame(height: 220)
-                EventTripSection(event: event)
                 EventNotesSection(event: event)
                     .frame(minHeight: 160)
             }
@@ -213,8 +215,6 @@ struct EventDetailView: View {
                 EventMiniMapSection(event: event)
                     .frame(width: miniMapSize)
             }
-            // UI: trip context (sibling events in the same drive).
-            EventTripSection(event: event)
             // LAYOUT: Notes is the only flexible section — it absorbs any slack
             // so the other cards keep their natural sizes.
             EventNotesSection(event: event)

@@ -35,6 +35,9 @@ struct EventsListView: View {
     @State private var filterState = EventsListFilterState()
     @State private var selection = EventsListSelection()
     @State private var showImportView: Bool = false
+    /// iOS-only fallback: multi-file picker for when the system folder picker
+    /// won't surface an "Open" affordance for a given storage provider.
+    @State private var showImportFilesView: Bool = false
 
     // === Export state ===
     @State private var exportInProgress: Bool = false
@@ -75,6 +78,15 @@ struct EventsListView: View {
                 .fileImporter(isPresented: $showImportView, allowedContentTypes: [.directory]) { result in
                     EventsImportRunner.handle(result: result, modelContext: modelContext)
                 }
+                #if os(iOS)
+                .fileImporter(
+                    isPresented: $showImportFilesView,
+                    allowedContentTypes: [.movie, .json],
+                    allowsMultipleSelection: true
+                ) { result in
+                    EventsImportRunner.handleFiles(result: result, modelContext: modelContext)
+                }
+                #endif
         }
         .environment(\.openEvent, OpenEventAction { event in
             path.append(event)
@@ -118,6 +130,37 @@ struct EventsListView: View {
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: 480)
                 .padding(.horizontal, 24)
+            #if os(iOS)
+            // BUTTON: empty-state import menu (iOS) — surfaces the file
+            // fallback alongside the folder picker since some storage
+            // providers (USB / SD readers) don't show an "Open" affordance
+            // in the system folder picker.
+            Menu {
+                Button {
+                    showImportView = true
+                } label: {
+                    Label("Import folder…", systemImage: "folder")
+                }
+                Button {
+                    showImportFilesView = true
+                } label: {
+                    Label("Import individual files…", systemImage: "doc.on.doc")
+                }
+            } label: {
+                Label("Import Sentry footage", systemImage: "square.and.arrow.down")
+                    .font(.title3.weight(.semibold))
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 6)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .padding(.top, 6)
+            Text("Tip: if your USB drive won't let you pick the folder, choose \"Import individual files…\" and select the event.json plus its .mp4 clips.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 24)
+            #else
             Button {
                 showImportView = true
             } label: {
@@ -132,6 +175,7 @@ struct EventsListView: View {
             Text("You can also tap the import icon in the top-right corner anytime.")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
+            #endif
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -220,7 +264,14 @@ struct EventsListView: View {
                 sortMode: $filterState.sortMode
             )
         }
+        #if os(iOS)
+        EventsImportToolbar(
+            showImportView: $showImportView,
+            showImportFilesView: $showImportFilesView
+        )
+        #else
         EventsImportToolbar(showImportView: $showImportView)
+        #endif
     }
 
     // MARK: - Export

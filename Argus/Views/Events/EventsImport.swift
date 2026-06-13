@@ -19,12 +19,25 @@ struct ImportTally {
 
 enum EventsImportRunner {
 
-    /// Top-level handler bound to the file importer in EventsListView.
+    /// Top-level handler bound to the folder importer in EventsListView.
     static func handle(result: Result<URL, Error>, modelContext: ModelContext) {
         switch result {
         case .success(let url):
             Task { @MainActor in
                 await runImport(url: url, modelContext: modelContext)
+            }
+        case .failure:
+            print("nothing was selected")
+        }
+    }
+
+    /// Multi-file fallback used on iOS when the system folder picker won't
+    /// surface an "Open" affordance for the user's storage provider.
+    static func handleFiles(result: Result<[URL], Error>, modelContext: ModelContext) {
+        switch result {
+        case .success(let urls):
+            Task { @MainActor in
+                await runFilesImport(urls: urls, modelContext: modelContext)
             }
         case .failure:
             print("nothing was selected")
@@ -40,8 +53,22 @@ enum EventsImportRunner {
         defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
 
         let imported = await importEvents(url: url)
+        persist(imported: imported, modelContext: modelContext)
+    }
 
-        // Build dedupe sets from current store contents.
+    @MainActor
+    private static func runFilesImport(urls: [URL], modelContext: ModelContext) async {
+        // Each picked URL carries its own security scope; we have to start it
+        // before reading the file and stop it when we're done.
+        let accessed: [URL] = urls.filter { $0.startAccessingSecurityScopedResource() }
+        defer { accessed.forEach { $0.stopAccessingSecurityScopedResource() } }
+
+        let imported = await importEventsFromFiles(urls: urls)
+        persist(imported: imported, modelContext: modelContext)
+    }
+
+    @MainActor
+    private static func persist(imported: ImportResult, modelContext: ModelContext) {
         let existingVideoPaths = currentVideoPaths(modelContext: modelContext)
         let existingEventKeys = currentEventKeys(modelContext: modelContext)
 
@@ -73,8 +100,6 @@ enum EventsImportRunner {
         }
         print("Import: events +\(tally.insertedEvents)/-\(tally.skippedEvents), videos +\(tally.insertedVideos)/-\(tally.skippedVideos)")
 
-        // Optionally kick off on-device summarization for the newly imported
-        // events. Gated by the user's Settings toggle.
         let opted = UserDefaults.standard.bool(forKey: SettingsView.summarizeOnImportKey)
         if opted && EventSummarizer.isAvailable && !freshlyInserted.isEmpty {
             autoSummaryRunner.run(events: freshlyInserted, modelContext: modelContext)
