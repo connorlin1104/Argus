@@ -39,11 +39,19 @@ struct PlayerSheet: View {
         VStack(spacing: 0) {
             header
             playerSurface
-            Spacer(minLength: 0)
         }
         #if os(macOS)
         // LAYOUT: wider sheet so the 4:3 video has room to breathe on desktop.
         .frame(minWidth: 960, minHeight: 760)
+        // UI: tap-to-dismiss covers any empty area around the video. Lives on
+        // the VStack's background so the playerSurface gets all the vertical
+        // slack (otherwise a sibling Color.clear would split the height and
+        // shrink the video to ~half its potential size).
+        .background(
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture { onDismiss() }
+        )
         #endif
         .onAppear { setupPlayer() }
         .onDisappear { teardownPlayer() }
@@ -101,19 +109,24 @@ struct PlayerSheet: View {
     // MARK: - Player surface
 
     /// UI: video player at Tesla's native 4:3 ratio so no black side-bars.
+    /// Uses a `Color.clear` sizer with `aspectRatio(.fit)` so the surface
+    /// actually grows to fill the proposed space — `VideoPlayer` has no
+    /// intrinsic size, so applying `aspectRatio` directly to it leaves the
+    /// view tiny inside large containers.
     @ViewBuilder
     private var playerSurface: some View {
-        if let player {
-            VideoPlayer(player: player)
-                // LAYOUT: 4:3 matches the Tesla dashcam recording.
-                .aspectRatio(4.0 / 3.0, contentMode: .fit)
-        } else {
-            ZStack {
-                Color.black
-                ProgressView().controlSize(.regular)
-            }
+        Color.clear
             .aspectRatio(4.0 / 3.0, contentMode: .fit)
-        }
+            .overlay {
+                if let player {
+                    VideoPlayer(player: player)
+                } else {
+                    ZStack {
+                        Color.black
+                        ProgressView().controlSize(.regular)
+                    }
+                }
+            }
     }
 
     // MARK: - Playback setup / teardown

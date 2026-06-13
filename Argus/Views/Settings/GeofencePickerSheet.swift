@@ -42,8 +42,10 @@ struct GeofencePickerSheet: View {
             .navigationTitle("Add Zone")
             .toolbar { toolbarContent }
         }
-        // LAYOUT: minimum sheet dimensions
+        #if os(macOS)
+        // LAYOUT: minimum sheet dimensions (macOS only — iOS uses native sheet sizing)
         .frame(minWidth: 500, minHeight: 600)
+        #endif
     }
 
     // MARK: - Map

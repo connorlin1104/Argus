@@ -48,11 +48,61 @@ struct VideoListView: View {
                 .navigationSubtitle("\(videos.count) clip\(videos.count == 1 ? "" : "s")")
                 #endif
                 .toolbar { analyzeToolbar }
-                .sheet(item: $playingVideo) { video in
-                    PlayerSheet(video: video) { playingVideo = nil }
-                }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // UI: the video popup is a manual overlay on both platforms so that
+        // clicks anywhere outside the card (the dimmed backdrop) dismiss it.
+        // We can't use `.sheet` on macOS for this — sheets are modal and
+        // swallow outside clicks.
+        .overlay {
+            if let video = playingVideo {
+                playerOverlay(video: video)
+                    // Slight fade-in feels less abrupt than instant.
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.15), value: playingVideo)
+    }
+
+    /// Centered modal: dimmed backdrop + PlayerSheet card. Tapping the
+    /// backdrop dismisses; the card itself sizes to its natural content
+    /// (header + 4:3 video) so there's no empty grey area under the video.
+    @ViewBuilder
+    private func playerOverlay(video: VideoRecording) -> some View {
+        ZStack {
+            // UI: dimmed backdrop covers the whole window/screen.
+            Color.black.opacity(0.55)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture { playingVideo = nil }
+
+            // UI: shrink-wrapped card so the dim shows on all sides.
+            PlayerSheet(video: video) { playingVideo = nil }
+                #if os(macOS)
+                // macOS: cap width so the card stays roughly the size of the
+                // old `.sheet` instead of stretching to the full window width.
+                .frame(maxWidth: 1000)
+                #else
+                .frame(maxWidth: .infinity)
+                #endif
+                .fixedSize(horizontal: false, vertical: true)
+                .background(
+                    RoundedRectangle(cornerRadius: 18)
+                        .fill(cardBackground)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 18))
+                .shadow(radius: 18)
+                .padding(20)
+        }
+    }
+
+    /// Platform-appropriate solid background for the popup card.
+    private var cardBackground: some ShapeStyle {
+        #if os(iOS)
+        return Color(uiColor: .systemBackground)
+        #else
+        return Color(nsColor: .windowBackgroundColor)
+        #endif
     }
 
     @ViewBuilder

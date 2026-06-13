@@ -166,10 +166,13 @@ struct EventDetailView: View {
     private var compactBody: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
+                // LAYOUT: name sits at the very top on iOS so the user sees it
+                // first before scrolling through the player.
+                EventNameSection(event: event)
+
                 rightPlayerColumn
                     .frame(maxWidth: .infinity)
 
-                EventNameSection(event: event)
                 if hasHeader { headerChips }
                 cameraButtonsRows
                 EventSummarySection(event: event, isGenerating: $isGenerating)

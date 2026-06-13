@@ -24,12 +24,8 @@ struct SettingsView: View {
     @State private var showPicker: Bool = false
     @State private var summaryRunner = AutoSummaryRunner()
 
-    static let summarizeOnImportKey = "summarizeOnImport"
-
     @AppStorage(ArgusApp.iCloudSyncDefaultsKey)
     private var iCloudSyncEnabled: Bool = false
-    @AppStorage(summarizeOnImportKey)
-    private var summarizeOnImport: Bool = false
 
     var body: some View {
         NavigationStack {
@@ -85,8 +81,6 @@ struct SettingsView: View {
 
     private var aiSection: some View {
         Section("On-device summaries") {
-            Toggle("Auto-summarize new events on import", isOn: $summarizeOnImport)
-                .disabled(!EventSummarizer.isAvailable)
             // BUTTON: backfill summaries for every event without one
             Button {
                 SettingsBulkActions.summarizeAll(

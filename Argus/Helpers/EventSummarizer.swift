@@ -177,7 +177,9 @@ enum EventSummarizer {
     }
 
     private static func deterministicSummary(facts: String) -> String {
-        // Compact fallback used when the on-device model can't run.
-        return "Event recorded.\n\(facts)"
+        // Shown when the on-device model can't run (unsupported device, OS too
+        // old, or the model failed). The raw facts are already visible in the
+        // Details card, so we keep this short instead of dumping them again.
+        return "This device doesn't support on-device AI summaries."
     }
 }

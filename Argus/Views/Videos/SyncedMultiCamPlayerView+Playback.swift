@@ -134,6 +134,32 @@ extension SyncedMultiCamPlayerView {
         }
     }
 
+    /// Lightweight seek used while the user is actively dragging the scrubber.
+    /// Uses a looser tolerance than `seekAll` so AVPlayer can satisfy the
+    /// stream of seek requests in real time, and keeps every player paused
+    /// (regardless of `isPlaying`) so the frame visibly follows the thumb.
+    func scrubSeekAll(to seconds: Double) {
+        // PLAYBACK: tolerance for live scrub seeks — too tight and AVPlayer
+        // can't keep up with finger movement; too loose and the thumb jumps
+        // to a frame several hundred ms away.
+        let tolerance = CMTime(seconds: 0.05, preferredTimescale: 600)
+        for (cam, player) in players {
+            let offset = offsets[cam] ?? 0
+            let duration = durations[cam] ?? 0
+            let local = seconds - offset
+            player.pause()
+            if local < 0 {
+                player.seek(to: .zero, toleranceBefore: tolerance, toleranceAfter: tolerance)
+            } else if local > duration {
+                player.seek(to: CMTime(seconds: duration, preferredTimescale: 600),
+                            toleranceBefore: tolerance, toleranceAfter: tolerance)
+            } else {
+                player.seek(to: CMTime(seconds: local, preferredTimescale: 600),
+                            toleranceBefore: tolerance, toleranceAfter: tolerance)
+            }
+        }
+    }
+
     /// Seek every camera to the equivalent local time. Clamps to each clip's
     /// duration so cameras that started later or ended earlier just sit on
     /// the correct edge frame.

@@ -100,8 +100,10 @@ enum EventsImportRunner {
         }
         print("Import: events +\(tally.insertedEvents)/-\(tally.skippedEvents), videos +\(tally.insertedVideos)/-\(tally.skippedVideos)")
 
-        let opted = UserDefaults.standard.bool(forKey: SettingsView.summarizeOnImportKey)
-        if opted && EventSummarizer.isAvailable && !freshlyInserted.isEmpty {
+        // AI: always backfill summaries for freshly imported events when the
+        // on-device model is available. The toggle that used to gate this was
+        // removed — there's no downside to running it.
+        if EventSummarizer.isAvailable && !freshlyInserted.isEmpty {
             autoSummaryRunner.run(events: freshlyInserted, modelContext: modelContext)
         }
     }

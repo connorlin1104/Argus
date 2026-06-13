@@ -64,9 +64,25 @@ extension SyncedMultiCamPlayerView {
                     in: 0...max(totalDuration, 0.1),
                     onEditingChanged: { editing in
                         isScrubbing = editing
-                        if !editing { seekAll(to: positionSeconds) }
+                        if editing {
+                            // PLAYBACK: snap each player to the current thumb
+                            // position right away so the very first drag tick
+                            // shows the right frame.
+                            scrubSeekAll(to: positionSeconds)
+                        } else {
+                            // PLAYBACK: precise final seek + resume playback
+                            // if we were playing before the drag started.
+                            seekAll(to: positionSeconds)
+                        }
                     }
                 )
+                // PLAYBACK: drive frame updates in real time while the user
+                // drags. The slider's `onEditingChanged` only fires at the
+                // start/end of the gesture; this onChange fires for every
+                // intermediate value so the video tracks the thumb.
+                .onChange(of: positionSeconds) { _, newValue in
+                    if isScrubbing { scrubSeekAll(to: newValue) }
+                }
                 GeometryReader { geo in
                     ForEach(allMarkers, id: \.self) { marker in
                         let fraction = totalDuration > 0 ? marker.eventSeconds / totalDuration : 0
