@@ -42,8 +42,12 @@ final class AutoSummaryRunner {
             for event in candidates {
                 if Task.isCancelled { break }
                 self.currentLabel = "Summarizing \(event.timestamp.formatted(date: .abbreviated, time: .shortened))"
+                // Build facts here on the main actor so the @Sendable closure
+                // below only captures a plain String — the @Model-backed
+                // `event` never crosses the actor boundary.
+                let facts = EventSummarizer.makeFacts(event: event, detection: nil)
                 let summary = await withTimeout(seconds: 25) {
-                    await EventSummarizer.summarize(event: event, detection: nil)
+                    await EventSummarizer.summarize(facts: facts)
                 }
                 if let summary, !summary.isEmpty {
                     event.summary = summary

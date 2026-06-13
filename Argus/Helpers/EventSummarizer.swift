@@ -29,9 +29,19 @@ enum EventSummarizer {
 
     /// Build a short, human-readable summary from a detection summary.
     /// Falls back to a deterministic string if the model is unavailable.
+    @MainActor
     static func summarize(event: Event, detection: DetectionSummary?) async -> String {
+        // Build facts on the main actor so the @Model-backed `event` never
+        // crosses an actor boundary — then hand the resulting Sendable string
+        // to the off-actor model call below.
         let factsBlock = buildFacts(event: event, detection: detection)
+        return await summarize(facts: factsBlock)
+    }
 
+    /// Off-actor entry point used after facts have already been built on the
+    /// main actor. Safe to call from `@Sendable` closures because `String` is
+    /// `Sendable` and the language-model call uses only the string + literals.
+    static func summarize(facts factsBlock: String) async -> String {
         #if canImport(FoundationModels)
         if #available(macOS 26.0, iOS 26.0, *) {
             guard case .available = SystemLanguageModel.default.availability else {
@@ -68,6 +78,14 @@ enum EventSummarizer {
         #else
         return deterministicSummary(facts: factsBlock)
         #endif
+    }
+
+    /// Public on the main actor so callers (e.g. AutoSummaryRunner) can
+    /// pre-build the facts string while they still hold the SwiftData model,
+    /// then hand the string off to the off-actor `summarize(facts:)`.
+    @MainActor
+    static func makeFacts(event: Event, detection: DetectionSummary?) -> String {
+        buildFacts(event: event, detection: detection)
     }
 
     private static func buildFacts(event: Event, detection: DetectionSummary?) -> String {
