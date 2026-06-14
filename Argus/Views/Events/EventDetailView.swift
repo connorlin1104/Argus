@@ -180,18 +180,30 @@ struct EventDetailView: View {
         }
     }
 
-    /// iPhone / compact-width layout — single scrollable column.
-    /// Player on top (with its own transport bar), then chips + camera buttons +
-    /// summary + details + mini map + notes. The event name lives in the
-    /// navigation bar instead of inline; Notes drops its height-matching
-    /// behavior here since the page scrolls naturally.
+    /// iPhone compact layout. Portrait scrolls through the whole page;
+    /// landscape collapses to the player only so the 4:3 clip can fit by
+    /// height instead of being sized by the full landscape width (which
+    /// pushes it taller than the screen).
     @ViewBuilder
     private var compactBody: some View {
+        #if os(iOS)
+        if isLandscape {
+            landscapeCompactBody
+        } else {
+            portraitCompactBody
+        }
+        #else
+        portraitCompactBody
+        #endif
+    }
+
+    /// Standard scrolling iPhone-portrait layout — player on top, then chips +
+    /// camera buttons + summary + details + mini map + notes. The event name
+    /// lives in the navigation bar instead of inline.
+    @ViewBuilder
+    private var portraitCompactBody: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
-                // LAYOUT: name moved to the navigation bar on iOS — the inline
-                // card here read too heavy on iPhone. Renaming lives in the
-                // events-list long-press menu (EventRowContextMenu).
                 rightPlayerColumn
                     .frame(maxWidth: .infinity)
 
@@ -212,6 +224,18 @@ struct EventDetailView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
         }
+    }
+
+    /// iPhone landscape: hide everything except the player so the bounded
+    /// VStack inside SyncedMultiCamPlayerView can fit the 4:3 tile by height.
+    /// The tab bar is already hidden in landscape (see body), so this reads as
+    /// full-screen playback.
+    @ViewBuilder
+    private var landscapeCompactBody: some View {
+        rightPlayerColumn
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: - Left info column

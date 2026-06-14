@@ -76,8 +76,10 @@ struct VideoListView: View {
     }
 
     /// Centered modal: dimmed backdrop + PlayerSheet card. Tapping the
-    /// backdrop dismisses; the card itself sizes to its natural content
-    /// (header + 4:3 video) so there's no empty grey area under the video.
+    /// backdrop dismisses; the card sizes to its natural content (header +
+    /// 4:3 video) so there's no empty grey area under the video. In iPhone
+    /// landscape the card stretches to the full available bounds so the
+    /// inner 4:3 surface can fit by height instead of by width.
     @ViewBuilder
     private func playerOverlay(video: VideoRecording) -> some View {
         ZStack {
@@ -87,16 +89,7 @@ struct VideoListView: View {
                 .contentShape(Rectangle())
                 .onTapGesture { playingVideo = nil }
 
-            // UI: shrink-wrapped card so the dim shows on all sides.
-            PlayerSheet(video: video) { playingVideo = nil }
-                #if os(macOS)
-                // macOS: cap width so the card stays roughly the size of the
-                // old `.sheet` instead of stretching to the full window width.
-                .frame(maxWidth: 1000)
-                #else
-                .frame(maxWidth: .infinity)
-                #endif
-                .fixedSize(horizontal: false, vertical: true)
+            sizedPlayerCard(video: video)
                 .background(
                     RoundedRectangle(cornerRadius: 18)
                         .fill(cardBackground)
@@ -105,6 +98,33 @@ struct VideoListView: View {
                 .shadow(radius: 18)
                 .padding(20)
         }
+    }
+
+    /// Platform/orientation-specific sizing for the popup card.
+    @ViewBuilder
+    private func sizedPlayerCard(video: VideoRecording) -> some View {
+        let card = PlayerSheet(video: video) { playingVideo = nil }
+        #if os(macOS)
+        // macOS: cap width so the card stays roughly the size of the old
+        // `.sheet` instead of stretching to the full window width.
+        card
+            .frame(maxWidth: 1000)
+            .fixedSize(horizontal: false, vertical: true)
+        #else
+        if isLandscape {
+            // LAYOUT: fill the available bounds in landscape so the inner
+            // playerSurface's aspectRatio(.fit) constraint sizes the video
+            // by the shorter dimension (height) rather than overflowing.
+            card
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            // LAYOUT: portrait keeps the original shrink-wrap behavior so
+            // the dim backdrop reads as a clean modal card.
+            card
+                .frame(maxWidth: .infinity)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        #endif
     }
 
     /// Platform-appropriate solid background for the popup card.
