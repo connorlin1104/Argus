@@ -78,8 +78,9 @@ struct VideoListView: View {
     /// Centered modal: dimmed backdrop + PlayerSheet card. Tapping the
     /// backdrop dismisses; the card sizes to its natural content (header +
     /// 4:3 video) so there's no empty grey area under the video. In iPhone
-    /// landscape the card stretches to the full available bounds so the
-    /// inner 4:3 surface can fit by height instead of by width.
+    /// landscape the card width is computed from the available height so the
+    /// chrome hugs the 4:3 video instead of stretching to the full screen
+    /// width (which left big white gutters on either side of the clip).
     @ViewBuilder
     private func playerOverlay(video: VideoRecording) -> some View {
         ZStack {
@@ -90,41 +91,61 @@ struct VideoListView: View {
                 .onTapGesture { playingVideo = nil }
 
             sizedPlayerCard(video: video)
-                .background(
-                    RoundedRectangle(cornerRadius: 18)
-                        .fill(cardBackground)
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 18))
-                .shadow(radius: 18)
                 .padding(20)
         }
     }
 
-    /// Platform/orientation-specific sizing for the popup card.
+    /// Platform/orientation-specific sizing for the popup card. The card
+    /// chrome (background fill, rounded clip, shadow) lives inside this
+    /// helper so the iPhone-landscape branch can apply it to a tight,
+    /// video-sized card instead of to the entire centered container.
     @ViewBuilder
     private func sizedPlayerCard(video: VideoRecording) -> some View {
-        let card = PlayerSheet(video: video) { playingVideo = nil }
         #if os(macOS)
         // macOS: cap width so the card stays roughly the size of the old
         // `.sheet` instead of stretching to the full window width.
-        card
+        decoratedCard(video: video)
             .frame(maxWidth: 1000)
             .fixedSize(horizontal: false, vertical: true)
         #else
         if isLandscape {
-            // LAYOUT: fill the available bounds in landscape so the inner
-            // playerSurface's aspectRatio(.fit) constraint sizes the video
-            // by the shorter dimension (height) rather than overflowing.
-            card
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // LAYOUT: compute the card width from the available height so it
+            // wraps the 4:3 video. PlayerSheet drops its header in landscape,
+            // so the card width is just videoH * 4/3, and `.fixedSize` lets
+            // the card height match the video instead of forcing a tall
+            // frame with an empty band beneath the clip.
+            GeometryReader { geo in
+                let availH = max(120, geo.size.height)
+                let videoW = availH * 4.0 / 3.0
+                let cardW = min(geo.size.width, videoW)
+
+                decoratedCard(video: video)
+                    .frame(width: cardW)
+                    .fixedSize(horizontal: false, vertical: true)
+                    // Center horizontally / vertically within the greedy GeometryReader.
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         } else {
             // LAYOUT: portrait keeps the original shrink-wrap behavior so
             // the dim backdrop reads as a clean modal card.
-            card
+            decoratedCard(video: video)
                 .frame(maxWidth: .infinity)
                 .fixedSize(horizontal: false, vertical: true)
         }
         #endif
+    }
+
+    /// PlayerSheet with the card chrome (rounded background fill, clip,
+    /// shadow) baked in. Sizing modifiers are applied by the caller so the
+    /// chrome wraps only the actual card bounds.
+    private func decoratedCard(video: VideoRecording) -> some View {
+        PlayerSheet(video: video) { playingVideo = nil }
+            .background(
+                RoundedRectangle(cornerRadius: 18)
+                    .fill(cardBackground)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 18))
+            .shadow(radius: 18)
     }
 
     /// Platform-appropriate solid background for the popup card.

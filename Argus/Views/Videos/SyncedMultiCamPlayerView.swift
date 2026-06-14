@@ -25,6 +25,16 @@ struct SyncedMultiCamPlayerView: View {
     /// buttons can live outside the player (e.g. in EventDetailView's left column).
     @Binding var focusedCamera: String?
 
+    /// LAYOUT: iPhone landscape collapses verticalSizeClass to .compact. We use
+    /// this to drop the wallclock badge and cap tile heights so the player fits
+    /// inside the (very short) landscape viewport.
+    #if os(iOS)
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+    private var isLandscapeCompact: Bool { verticalSizeClass == .compact }
+    #else
+    private var isLandscapeCompact: Bool { false }
+    #endif
+
     // === Playback state (shared with the +Playback / +Controls / +Export extensions) ===
     // NOTE: these are intentionally `internal` (no `private`) so the sibling
     // extension files can read/write them. Don't make these `private`.
@@ -79,6 +89,25 @@ struct SyncedMultiCamPlayerView: View {
     }
 
     var body: some View {
+        Group {
+            if isLandscapeCompact {
+                landscapeBody
+            } else {
+                standardBody
+            }
+        }
+        .task(id: videoFingerprint) {
+            setupPlayers()
+        }
+        .onDisappear {
+            tearDown()
+        }
+    }
+
+    /// macOS / iPad / iPhone-portrait layout — natural vertical stacking with
+    /// the wallclock badge floating above the player.
+    @ViewBuilder
+    private var standardBody: some View {
         VStack(spacing: 8) {
             // UI: floating wall-clock badge above the grid
             wallClockBadge
@@ -91,7 +120,7 @@ struct SyncedMultiCamPlayerView: View {
                 tile(camID: focused, showsExitButton: false)
                     .frame(maxWidth: focusTileMaxWidth)
             } else {
-                grid
+                grid()
                     .frame(maxWidth: playerMaxWidth)
             }
 
@@ -103,11 +132,48 @@ struct SyncedMultiCamPlayerView: View {
                 .frame(maxWidth: currentPlayerWidth)
         }
         .frame(maxWidth: currentPlayerWidth)
-        .task(id: videoFingerprint) {
-            setupPlayers()
-        }
-        .onDisappear {
-            tearDown()
+    }
+
+    /// iPhone landscape layout — drops the wallclock badge (the user reported it
+    /// was eating space the focused tile could use) and explicitly caps the
+    /// focused/grid heights via a GeometryReader so the 4:3 tiles can't
+    /// overflow the short landscape viewport.
+    @ViewBuilder
+    private var landscapeBody: some View {
+        GeometryReader { geo in
+            // Reserve room for the control bar + inter-row spacing. Tighter
+            // than the original 64 so the focused tile gets a little more
+            // headroom (user feedback after seeing the first cut).
+            let chromeReserve: CGFloat = 56
+            let videoBudget = max(120, geo.size.height - chromeReserve)
+            // 2x2 grid: each tile gets half the budget minus row spacing.
+            // Scaled down a touch so the grid reads as "compact" instead of
+            // edge-to-edge.
+            let gridSpacing: CGFloat = 4
+            let gridTileMax = max(80, (videoBudget - gridSpacing) / 2 * 0.9)
+            let gridTileWidth = gridTileMax * 4.0 / 3.0
+            // Cap the grid's total width to (tileWidth * 2 + spacing) so
+            // both columns sit adjacent to each other. Without this, the
+            // .flexible() columns spread to playerMaxWidth and the smaller
+            // tiles sit at the outer edges with a huge gap in the middle.
+            let gridTotalWidth = gridTileWidth * 2 + gridSpacing
+
+            VStack(spacing: 8) {
+                if let focused = focusedCamera {
+                    tile(camID: focused, showsExitButton: false)
+                        .frame(maxWidth: focusTileMaxWidth, maxHeight: videoBudget)
+                } else {
+                    grid(tileMaxHeight: gridTileMax)
+                        .frame(maxWidth: min(playerMaxWidth, gridTotalWidth))
+                }
+
+                keyboardShortcutLayer
+
+                controlBar
+                    .frame(maxWidth: currentPlayerWidth)
+            }
+            .frame(maxWidth: currentPlayerWidth)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 }

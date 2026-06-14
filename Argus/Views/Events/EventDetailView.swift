@@ -118,6 +118,11 @@ struct EventDetailView: View {
         // so the tab bar at the bottom only steals pixels. Hide it while we're
         // in landscape; SwiftUI restores it on rotation back / pop.
         .toolbar(isLandscape ? .hidden : .automatic, for: .tabBar)
+        // LAYOUT: landscape also hides the navigation bar (and with it the
+        // event-name title + star/archive items) so the player can claim the
+        // top ~32pt of the screen. Users can swipe from the leading edge to
+        // go back, or rotate to portrait to reach the toolbar actions.
+        .toolbar(isLandscape ? .hidden : .automatic, for: .navigationBar)
         #endif
         .toolbar { toolbarContent }
     }
@@ -228,13 +233,12 @@ struct EventDetailView: View {
 
     /// iPhone landscape: hide everything except the player so the bounded
     /// VStack inside SyncedMultiCamPlayerView can fit the 4:3 tile by height.
-    /// The tab bar is already hidden in landscape (see body), so this reads as
-    /// full-screen playback.
+    /// The tab bar AND nav bar are already hidden in landscape (see body),
+    /// so this reads as full-screen playback — no horizontal padding so the
+    /// tiles get every available pixel.
     @ViewBuilder
     private var landscapeCompactBody: some View {
         rightPlayerColumn
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 

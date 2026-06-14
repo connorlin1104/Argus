@@ -24,6 +24,16 @@ struct PlayerSheet: View {
 
     @Environment(\.modelContext) private var modelContext
 
+    /// LAYOUT: iPhone landscape collapses verticalSizeClass to .compact.
+    /// We use it to drop the header row and float a close button over the
+    /// video so the card can be just the 4:3 surface (no empty band beneath).
+    #if os(iOS)
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+    private var isLandscape: Bool { verticalSizeClass == .compact }
+    #else
+    private var isLandscape: Bool { false }
+    #endif
+
     @State private var player: AVPlayer?
     @State private var resolvedURL: URL?
     @State private var didAccess: Bool = false
@@ -37,8 +47,17 @@ struct PlayerSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
+            if !isLandscape {
+                header
+            }
             playerSurface
+                #if os(iOS)
+                .overlay(alignment: .topTrailing) {
+                    if isLandscape {
+                        floatingCloseButton
+                    }
+                }
+                #endif
         }
         #if os(macOS)
         // LAYOUT: wider sheet so the 4:3 video has room to breathe on desktop.
@@ -56,6 +75,23 @@ struct PlayerSheet: View {
         .onAppear { setupPlayer() }
         .onDisappear { teardownPlayer() }
     }
+
+    #if os(iOS)
+    /// BUTTON: floating close button shown over the video when the header is
+    /// hidden (iPhone landscape). Mirrors the header's close affordance but
+    /// reads as a fullscreen-style chrome overlay rather than a UI strip.
+    private var floatingCloseButton: some View {
+        Button {
+            onDismiss()
+        } label: {
+            Image(systemName: "xmark.circle.fill")
+                .font(.title)
+                .foregroundStyle(.white, .black.opacity(0.45))
+        }
+        .buttonStyle(.plain)
+        .padding(10)
+    }
+    #endif
 
     // MARK: - Header
 

@@ -15,12 +15,15 @@ extension SyncedMultiCamPlayerView {
 
     /// UI: the default 2x2 grid layout shown when no tile is focused.
     /// LAYOUT: change `spacing: 4` here to widen/tighten gaps between tiles.
+    /// `tileMaxHeight` lets the iPhone-landscape layout shrink the tiles to
+    /// fit a bounded viewport instead of overflowing past the controls.
     @ViewBuilder
-    var grid: some View {
+    func grid(tileMaxHeight: CGFloat = .infinity) -> some View {
         let columns = [GridItem(.flexible(), spacing: 4), GridItem(.flexible(), spacing: 4)]
         LazyVGrid(columns: columns, spacing: 4) {
             ForEach(orderedCameras, id: \.self) { camID in
                 tile(camID: camID, showsExitButton: false)
+                    .frame(maxHeight: tileMaxHeight)
                     .onTapGesture {
                         // UI: tap a tile to enter focus mode for that camera
                         withAnimation(.easeInOut(duration: 0.25)) {
