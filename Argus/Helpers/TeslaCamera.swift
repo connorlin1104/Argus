@@ -9,6 +9,7 @@
 
 import Foundation
 import CoreGraphics
+import AVFoundation
 
 // MARK: - Camera registry
 
@@ -48,6 +49,33 @@ enum TeslaCamera {
         case "back":           return "Rear"
         default:               return ""
         }
+    }
+}
+
+// MARK: - Footage aspect ratio
+
+/// Reads the true width:height ratio of a clip from its video track.
+/// Tesla footage size varies by camera hardware — HW3 records 1280×960 (4:3)
+/// while HW4 records 1448×938 / 2896×1876 (~3:2) — so player surfaces must
+/// measure each clip instead of assuming one ratio.
+enum VideoAspect {
+
+    /// Used while the real ratio is still loading, or if the track can't be
+    /// read. 4:3 matches the older (HW3) footage.
+    static let fallbackRatio: CGFloat = 4.0 / 3.0
+
+    /// Width / height of the first video track, corrected for the track's
+    /// preferred transform. Returns nil if the file has no readable video track.
+    static func ratio(of url: URL) async -> CGFloat? {
+        let asset = AVURLAsset(url: url)
+        guard let track = try? await asset.loadTracks(withMediaType: .video).first,
+              let (size, transform) = try? await track.load(.naturalSize, .preferredTransform)
+        else { return nil }
+        let rect = CGRect(origin: .zero, size: size).applying(transform)
+        let width = abs(rect.width)
+        let height = abs(rect.height)
+        guard width > 0, height > 0 else { return nil }
+        return width / height
     }
 }
 

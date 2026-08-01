@@ -43,16 +43,18 @@ extension SyncedMultiCamPlayerView {
     func tile(camID: String, showsExitButton: Bool) -> some View {
         let name = TeslaCamera.displayName(for: camID)
         let label = name.isEmpty ? "Camera" : name
+        // LAYOUT: footage ratio measured per clip — 4:3 on HW3 cars, ~3:2 on
+        // HW4 — with a 4:3 fallback while the track is still loading.
+        let ratio = aspectRatios[camID] ?? VideoAspect.fallbackRatio
         return ZStack(alignment: .topLeading) {
             // Video surface (or black placeholder if we couldn't open the file)
             if let player = players[camID] {
                 PlayerLayerView(player: player)
-                    // LAYOUT: 4:3 is the Tesla dashcam aspect ratio
-                    .aspectRatio(4.0/3.0, contentMode: .fit)
+                    .aspectRatio(ratio, contentMode: .fit)
                     .allowsHitTesting(false)
             } else {
                 Color.black
-                    .aspectRatio(4.0/3.0, contentMode: .fit)
+                    .aspectRatio(ratio, contentMode: .fit)
                     .overlay(
                         // TEXT: shown when a camera feed is missing
                         Text("No \(label) feed")

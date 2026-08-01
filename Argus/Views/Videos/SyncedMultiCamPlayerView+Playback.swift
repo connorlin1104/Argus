@@ -73,6 +73,17 @@ extension SyncedMultiCamPlayerView {
         autoPlayAfterSetup()
     }
 
+    /// Measure each clip's real width:height ratio off its video track.
+    /// Runs after `setupPlayers()`; tiles show the 4:3 fallback until the
+    /// ratio for their camera lands (imperceptible for local files).
+    func loadAspectRatios() async {
+        for (cam, url) in resolvedURLs {
+            if let ratio = await VideoAspect.ratio(of: url) {
+                aspectRatios[cam] = ratio
+            }
+        }
+    }
+
     /// Auto-play once setup is complete.
     private func autoPlayAfterSetup() {
         isPlaying = true
@@ -111,6 +122,7 @@ extension SyncedMultiCamPlayerView {
         resolvedURLs.removeAll()
         offsets.removeAll()
         durations.removeAll()
+        aspectRatios.removeAll()
         isPlaying = false
     }
 

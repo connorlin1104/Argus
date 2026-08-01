@@ -50,6 +50,10 @@ struct SyncedMultiCamPlayerView: View {
     @State var primaryCamera: String = ""
     @State var isScrubbing: Bool = false
     @State var isExporting: Bool = false
+    /// Per-camera width:height ratio measured from each clip's video track.
+    /// Tesla footage size differs by hardware generation (HW3 is 4:3, HW4 is
+    /// ~3:2), so tiles read from here instead of assuming one ratio.
+    @State var aspectRatios: [String: CGFloat] = [:]
 
     /// LAYOUT: Canonical camera display order. Only cameras present in `videos` show up.
     let preferredCameraOrder: [String] = ["front", "left_repeater", "right_repeater", "back"]
@@ -71,6 +75,13 @@ struct SyncedMultiCamPlayerView: View {
             ordered.append(cam)
         }
         return ordered
+    }
+
+    /// Representative footage ratio for layout math (all four cameras on one
+    /// car share a generation, so any loaded ratio works). Falls back to 4:3
+    /// until the tracks finish loading.
+    var referenceAspectRatio: CGFloat {
+        aspectRatios[primaryCamera] ?? aspectRatios.values.first ?? VideoAspect.fallbackRatio
     }
 
     /// Fingerprint used to drive `.task(id:)` — when the input video list changes,
@@ -98,6 +109,7 @@ struct SyncedMultiCamPlayerView: View {
         }
         .task(id: videoFingerprint) {
             setupPlayers()
+            await loadAspectRatios()
         }
         .onDisappear {
             tearDown()
@@ -136,7 +148,7 @@ struct SyncedMultiCamPlayerView: View {
 
     /// iPhone landscape layout — drops the wallclock badge (the user reported it
     /// was eating space the focused tile could use) and explicitly caps the
-    /// focused/grid heights via a GeometryReader so the 4:3 tiles can't
+    /// focused/grid heights via a GeometryReader so the tiles can't
     /// overflow the short landscape viewport.
     @ViewBuilder
     private var landscapeBody: some View {
@@ -151,7 +163,7 @@ struct SyncedMultiCamPlayerView: View {
             // edge-to-edge.
             let gridSpacing: CGFloat = 4
             let gridTileMax = max(80, (videoBudget - gridSpacing) / 2 * 0.9)
-            let gridTileWidth = gridTileMax * 4.0 / 3.0
+            let gridTileWidth = gridTileMax * referenceAspectRatio
             // Cap the grid's total width to (tileWidth * 2 + spacing) so
             // both columns sit adjacent to each other. Without this, the
             // .flexible() columns spread to playerMaxWidth and the smaller

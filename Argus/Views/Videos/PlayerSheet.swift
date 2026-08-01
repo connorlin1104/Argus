@@ -3,8 +3,8 @@
 //  Argus
 //
 //  Modal sheet that plays a single clip with a header bar. The video surface
-//  uses the Tesla dashcam's native 4:3 aspect ratio so there are no black
-//  side-bars. A "Transfer to Events" button creates a new Event at the
+//  uses the clip's native aspect ratio (4:3 on HW3 cars, ~3:2 on HW4) so
+//  there are no black side-bars. A "Transfer to Events" button creates a new Event at the
 //  current playback time — for cases where the user finds something the
 //  automatic Sentry trigger missed.
 //
@@ -26,7 +26,7 @@ struct PlayerSheet: View {
 
     /// LAYOUT: iPhone landscape collapses verticalSizeClass to .compact.
     /// We use it to drop the header row and float a close button over the
-    /// video so the card can be just the 4:3 surface (no empty band beneath).
+    /// video so the card can be just the video surface (no empty band beneath).
     #if os(iOS)
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     private var isLandscape: Bool { verticalSizeClass == .compact }
@@ -35,6 +35,9 @@ struct PlayerSheet: View {
     #endif
 
     @State private var player: AVPlayer?
+    /// Footage ratio measured from the clip's video track (4:3 on HW3 cars,
+    /// ~3:2 on HW4). Starts at the fallback until the track loads.
+    @State private var aspectRatio: CGFloat = VideoAspect.fallbackRatio
     @State private var resolvedURL: URL?
     @State private var didAccess: Bool = false
     @State private var transferState: TransferState = .idle
@@ -60,7 +63,7 @@ struct PlayerSheet: View {
                 #endif
         }
         #if os(macOS)
-        // LAYOUT: wider sheet so the 4:3 video has room to breathe on desktop.
+        // LAYOUT: wider sheet so the video has room to breathe on desktop.
         .frame(minWidth: 960, minHeight: 760)
         // UI: tap-to-dismiss covers any empty area around the video. Lives on
         // the VStack's background so the playerSurface gets all the vertical
@@ -144,7 +147,7 @@ struct PlayerSheet: View {
 
     // MARK: - Player surface
 
-    /// UI: video player at Tesla's native 4:3 ratio so no black side-bars.
+    /// UI: video player at the clip's native ratio so no black side-bars.
     /// Uses a `Color.clear` sizer with `aspectRatio(.fit)` so the surface
     /// actually grows to fill the proposed space — `VideoPlayer` has no
     /// intrinsic size, so applying `aspectRatio` directly to it leaves the
@@ -152,7 +155,7 @@ struct PlayerSheet: View {
     @ViewBuilder
     private var playerSurface: some View {
         Color.clear
-            .aspectRatio(4.0 / 3.0, contentMode: .fit)
+            .aspectRatio(aspectRatio, contentMode: .fit)
             .overlay {
                 if let player {
                     VideoPlayer(player: player)
@@ -179,6 +182,13 @@ struct PlayerSheet: View {
         player = p
         // PLAYBACK: auto-play on appearance
         p.play()
+        // Size the surface to the clip's real footage ratio (varies by
+        // camera hardware generation).
+        Task {
+            if let ratio = await VideoAspect.ratio(of: url) {
+                aspectRatio = ratio
+            }
+        }
     }
 
     private func teardownPlayer() {
