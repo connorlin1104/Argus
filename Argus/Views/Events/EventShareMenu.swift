@@ -4,7 +4,8 @@
 //
 //  Resolves the matched VideoRecording bookmarks into temp file URLs (via
 //  EventFileVendor) so ShareLink and Quick Look can vend the clips to other
-//  apps. The temp files persist until the OS reaps the temporary directory.
+//  apps. The temp files persist for the rest of the session (so an in-flight
+//  share is never broken) and are swept on the next app launch.
 //
 
 import SwiftUI

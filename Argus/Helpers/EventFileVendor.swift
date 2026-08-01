@@ -63,6 +63,23 @@ enum EventFileVendor {
         return dir
     }
 
+    /// Temp-dir name prefixes this app writes (staging folders + export zips).
+    /// Keep in sync with `makeStagingRoot` callers and EventExporter's zip name.
+    private static let stagingPrefixes = ["event-share-", "events-export-", "Argus-export-"]
+
+    /// Delete staging folders and export zips left behind by earlier sessions.
+    /// Runs at launch — not right after a share — so the share sheet is never
+    /// still reading a file (e.g. an in-flight AirDrop) when we delete it.
+    static func sweepStaleStaging() {
+        let fm = FileManager.default
+        guard let items = try? fm.contentsOfDirectory(
+            at: fm.temporaryDirectory, includingPropertiesForKeys: nil
+        ) else { return }
+        for item in items where stagingPrefixes.contains(where: { item.lastPathComponent.hasPrefix($0) }) {
+            try? fm.removeItem(at: item)
+        }
+    }
+
     private static func resolveBookmark(_ data: Data) throws -> URL? {
         var isStale = false
         #if os(iOS)

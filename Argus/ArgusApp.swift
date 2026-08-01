@@ -56,6 +56,12 @@ struct ArgusApp: App {
         }
     }()
 
+    init() {
+        // Privacy: remove share/export video copies staged in the temp dir
+        // by previous sessions (see EventFileVendor.sweepStaleStaging).
+        EventFileVendor.sweepStaleStaging()
+    }
+
     var body: some Scene {
         WindowGroup {
             MainView()

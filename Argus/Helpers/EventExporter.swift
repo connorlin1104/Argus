@@ -66,6 +66,10 @@ enum EventExporter {
             await MainActor.run { progress(Double(i + 1) / total, label) }
         }
 
+        // The zip is self-contained — remove the unzipped staging copies as
+        // soon as it exists (or if zipping fails) so plaintext video copies
+        // don't linger in the temp dir.
+        defer { try? FileManager.default.removeItem(at: staging) }
         return try await zip(directory: staging)
     }
 
