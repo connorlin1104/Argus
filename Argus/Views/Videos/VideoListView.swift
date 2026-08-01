@@ -235,13 +235,20 @@ struct VideoListView: View {
 
     // MARK: - Actions
 
-    /// Group videos by formatted date (used for the section headers).
+    /// Group videos by calendar day (used for the section headers), newest
+    /// day first. Sections must be sorted by real dates — sorting the
+    /// formatted strings put "Mar" above "Aug" (alphabetical), scrambling the
+    /// chronological order. Rows within a day are already newest-first from
+    /// the @Query's reverse startTime sort.
     private var grouped: [(key: String, value: [VideoRecording])] {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
         formatter.timeStyle = .none
-        let groups = Dictionary(grouping: videos) { formatter.string(from: $0.startTime) }
-        return groups.sorted { $0.key > $1.key }
+        let calendar = Calendar.current
+        let groups = Dictionary(grouping: videos) { calendar.startOfDay(for: $0.startTime) }
+        return groups
+            .sorted { $0.key > $1.key }
+            .map { (key: formatter.string(from: $0.key), value: $0.value) }
     }
 
     private func runAnalysis() {

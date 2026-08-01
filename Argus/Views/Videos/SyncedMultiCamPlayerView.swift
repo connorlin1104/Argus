@@ -59,12 +59,14 @@ struct SyncedMultiCamPlayerView: View {
     let preferredCameraOrder: [String] = ["front", "left_repeater", "right_repeater", "back"]
 
     // === TUNING KNOBS ===
-    /// LAYOUT: Max width of the 2x2 grid.
-    let playerMaxWidth: CGFloat = 1050
+    /// LAYOUT: Max width of the 2x2 grid. Generous — on macOS the detail page
+    /// sizes the player column to the window height, so this cap only kicks
+    /// in on very large displays.
+    let playerMaxWidth: CGFloat = 1600
     /// LAYOUT: Max width of the focused tile. Slightly larger than `playerMaxWidth`
     /// because the grid's 4-pt inter-tile spacing makes the 2x2 layout feel a touch
     /// wider than a single tile at the same cap.
-    let focusTileMaxWidth: CGFloat = 1052
+    let focusTileMaxWidth: CGFloat = 1602
 
     /// Cameras to render, in display order, deduped.
     var orderedCameras: [String] {

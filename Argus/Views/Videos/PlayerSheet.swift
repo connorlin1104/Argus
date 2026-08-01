@@ -41,6 +41,10 @@ struct PlayerSheet: View {
     @State private var resolvedURL: URL?
     @State private var didAccess: Bool = false
     @State private var transferState: TransferState = .idle
+    /// UI: true when the clip file can't be resolved/opened (deleted file,
+    /// unplugged drive) — swaps the loading spinner for a "Can't locate file"
+    /// message instead of spinning forever.
+    @State private var fileMissing: Bool = false
 
     private enum TransferState: Equatable {
         case idle
@@ -162,7 +166,20 @@ struct PlayerSheet: View {
                 } else {
                     ZStack {
                         Color.black
-                        ProgressView().controlSize(.regular)
+                        if fileMissing {
+                            // TEXT: shown when the clip file can't be found on disk
+                            VStack(spacing: 6) {
+                                Image(systemName: "video.slash.fill")
+                                    .font(.largeTitle)
+                                Text("Can't locate file")
+                                    .font(.headline)
+                                Text("The video file may have been moved or deleted.")
+                                    .font(.caption)
+                            }
+                            .foregroundStyle(.secondary)
+                        } else {
+                            ProgressView().controlSize(.regular)
+                        }
                     }
                 }
             }
@@ -171,10 +188,17 @@ struct PlayerSheet: View {
     // MARK: - Playback setup / teardown
 
     private func setupPlayer() {
-        guard player == nil, let url = resolveBookmark() else { return }
+        guard player == nil else { return }
+        guard let url = resolveBookmark() else {
+            // Bookmark resolution fails when the file no longer exists (or its
+            // drive is gone) — surface that instead of a spinner.
+            fileMissing = true
+            return
+        }
         didAccess = url.startAccessingSecurityScopedResource()
         guard didAccess else {
             print("Failed to access security-scoped resource for URL: \(url)")
+            fileMissing = true
             return
         }
         resolvedURL = url

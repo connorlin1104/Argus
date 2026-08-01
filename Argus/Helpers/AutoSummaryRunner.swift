@@ -44,8 +44,13 @@ final class AutoSummaryRunner {
                 self.currentLabel = "Summarizing \(event.timestamp.formatted(date: .abbreviated, time: .shortened))"
                 // Build facts here on the main actor so the @Sendable closure
                 // below only captures a plain String — the @Model-backed
-                // `event` never crosses the actor boundary.
-                let facts = EventSummarizer.makeFacts(event: event, detection: nil)
+                // `event` never crosses the actor boundary. Matched clips'
+                // detection markers give the model a timeline to narrate.
+                let facts = EventSummarizer.makeFacts(
+                    event: event,
+                    detection: nil,
+                    videos: matchedVideos(for: event, modelContext: modelContext)
+                )
                 let summary = await withTimeout(seconds: 25) {
                     await EventSummarizer.summarize(facts: facts)
                 }
@@ -63,6 +68,18 @@ final class AutoSummaryRunner {
     func cancel() {
         task?.cancel()
         finish()
+    }
+
+    /// Clips whose recording window covers this event's timestamp.
+    private func matchedVideos(for event: Event,
+                               modelContext: ModelContext) -> [VideoRecording] {
+        let t = event.timestamp
+        let descriptor = FetchDescriptor<VideoRecording>(
+            predicate: #Predicate { video in
+                video.startTime <= t && video.endTime >= t
+            }
+        )
+        return (try? modelContext.fetch(descriptor)) ?? []
     }
 
     private func finish() {

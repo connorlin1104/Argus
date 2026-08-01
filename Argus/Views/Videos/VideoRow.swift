@@ -21,6 +21,11 @@ struct VideoRow: View {
 
     @State private var thumbnail: Image?
 
+    /// UI: true when the source clip couldn't be opened (deleted file,
+    /// unplugged drive) — swaps the loading spinner for a "Can't locate file"
+    /// placeholder so rows don't spin forever.
+    @State private var fileMissing: Bool = false
+
     /// UI: true while the cursor is over this row — drives the background tint.
     @State private var isHovered: Bool = false
 
@@ -76,6 +81,14 @@ struct VideoRow: View {
                 thumbnail
                     .resizable()
                     .aspectRatio(contentMode: .fill)
+            } else if fileMissing {
+                // TEXT: shown when the clip file can't be found on disk
+                VStack(spacing: 3) {
+                    Image(systemName: "video.slash.fill")
+                    Text("Can't locate file")
+                        .font(.system(size: 9, weight: .medium))
+                }
+                .foregroundStyle(.secondary)
             } else {
                 ProgressView().controlSize(.small)
             }
@@ -102,7 +115,13 @@ struct VideoRow: View {
         guard let cgImage = await ThumbnailCache.thumbnail(
             forPath: video.url.path,
             bookmark: video.bookmark
-        ) else { return }
+        ) else {
+            // No frame means the clip couldn't be opened — most commonly the
+            // file was deleted or its drive is unplugged.
+            fileMissing = true
+            return
+        }
+        fileMissing = false
         #if os(macOS)
         thumbnail = Image(nsImage: NSImage(cgImage: cgImage, size: .zero))
         #else

@@ -126,7 +126,8 @@ enum VideoAnalysisRunner {
                 if existing.summary.isEmpty {
                     existing.summary = await EventSummarizer.summarize(
                         event: existing,
-                        detection: summary
+                        detection: summary,
+                        videos: [video]
                     )
                 }
             } else {
@@ -136,7 +137,11 @@ enum VideoAnalysisRunner {
                     summary: summary,
                     tag: tag
                 )
-                event.summary = await EventSummarizer.summarize(event: event, detection: summary)
+                event.summary = await EventSummarizer.summarize(
+                    event: event,
+                    detection: summary,
+                    videos: [video]
+                )
                 modelContext.insert(event)
             }
             do { try modelContext.save() } catch { print("save failed: \(error)") }

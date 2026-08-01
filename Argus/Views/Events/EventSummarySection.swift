@@ -8,12 +8,15 @@
 //
 
 import SwiftUI
+import SwiftData
 
 /// The "AI Summary" card with regenerate button.
 /// TEXT: change copy in this view to edit the summary section labels.
 struct EventSummarySection: View {
     @Bindable var event: Event
     @Binding var isGenerating: Bool
+
+    @Environment(\.modelContext) private var modelContext
 
     var body: some View {
         // UI: AI summary card
@@ -46,7 +49,24 @@ struct EventSummarySection: View {
     private func generateSummary() async {
         isGenerating = true
         defer { isGenerating = false }
-        let text = await EventSummarizer.summarize(event: event, detection: nil)
+        let text = await EventSummarizer.summarize(
+            event: event,
+            detection: nil,
+            videos: matchedVideos()
+        )
         event.summary = text
+    }
+
+    /// Clips whose recording window covers this event — their stored
+    /// detection markers give the summarizer a timeline of on-screen activity
+    /// to narrate.
+    private func matchedVideos() -> [VideoRecording] {
+        let t = event.timestamp
+        let descriptor = FetchDescriptor<VideoRecording>(
+            predicate: #Predicate { video in
+                video.startTime <= t && video.endTime >= t
+            }
+        )
+        return (try? modelContext.fetch(descriptor)) ?? []
     }
 }

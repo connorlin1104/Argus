@@ -28,6 +28,16 @@ private struct RightColumnHeightKey: PreferenceKey {
     }
 }
 
+/// LAYOUT: Preference key used to read the Details card's natural height so
+/// the mini map beside it can stretch to exactly the same height instead of
+/// leaving a gap beneath a fixed square.
+private struct DetailsHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
 struct EventDetailView: View {
     @Bindable var event: Event
     @State private var isGenerating: Bool = false
@@ -37,6 +47,9 @@ struct EventDetailView: View {
     /// LAYOUT: Measured height of the player column. Used to clamp the left
     /// info column so Notes stops growing at the player's bottom.
     @State private var rightColumnHeight: CGFloat = 0
+    /// LAYOUT: Measured height of the Details card so the mini map beside it
+    /// can match it exactly.
+    @State private var detailsHeight: CGFloat = 0
 
     /// LAYOUT: drives single-column stacking on iPhone-width screens.
     #if os(iOS)
@@ -72,18 +85,22 @@ struct EventDetailView: View {
 
     // === TUNING KNOBS ===
     /// LAYOUT: Max width of the right-hand player column. Matches the
-    /// SyncedMultiCamPlayerView's own playerMaxWidth so the timeline lines up.
-    private let playerColumnMaxWidth: CGFloat = 1052
+    /// SyncedMultiCamPlayerView's own focusTileMaxWidth so the timeline lines up.
+    private let playerColumnMaxWidth: CGFloat = 1602
     /// LAYOUT: Minimum width of the left info column on small windows.
-    /// Sized so the Details card + the square mini map can sit side-by-side
-    /// (≈220pt map + spacing + ≈200pt details).
-    private let leftColumnMinWidth: CGFloat = 460
-    /// LAYOUT: Fixed edge length of the square mini map next to Details.
-    /// Keeping it fixed lets Details flex with the left column's width while
-    /// the map stays perfectly square.
+    /// Sized so the Details card + the mini map can sit side-by-side
+    /// (≈220pt map + spacing + ≈180pt details). Kept as small as readable so
+    /// the player column gets every pixel it can use.
+    private let leftColumnMinWidth: CGFloat = 420
+    /// LAYOUT: Fixed width of the mini map next to Details. Its height
+    /// stretches to match the Details card (see DetailsHeightKey).
     private let miniMapSize: CGFloat = 220
     /// LAYOUT: Horizontal gap between the info column and the player column.
     private let columnSpacing: CGFloat = 16
+    /// LAYOUT: Vertical space the player chrome (wall-clock badge + transport
+    /// bar + inter-row spacing) occupies around the video. Used to size the
+    /// video to the window height without pushing the transport bar off-screen.
+    private let playerChromeReserve: CGFloat = 104
 
     private var hasHeader: Bool {
         !event.zone.isEmpty || event.tag != "unknown" || event.interestingnessScore > 0
@@ -146,37 +163,52 @@ struct EventDetailView: View {
     @ViewBuilder
     private var regularBody: some View {
         // LAYOUT: two-column page. No outer scroll — info hugs the left, video hugs the right.
-        HStack(alignment: .top, spacing: columnSpacing) {
-            leftInfoColumn
-                .frame(minWidth: leftColumnMinWidth, maxWidth: .infinity, alignment: .topLeading)
-                // LAYOUT: clamp to the right column's natural height (+12 to
-                // compensate for the -12 top padding below that lifts the name
-                // badge to timer level) so Notes can't push past the player.
-                .frame(
-                    maxHeight: rightColumnHeight > 0 ? rightColumnHeight + 12 : .infinity,
-                    alignment: .top
-                )
-                // LAYOUT: pull the name badge up so its frame aligns with the
-                // wall-clock badge on the right (which sits at .padding(.top, -12)).
-                .padding(.top, -12)
+        // The GeometryReader sizes the player column to fit BOTH the available
+        // width and height, so the video scales as large as the window allows
+        // instead of leaving a dead band below the transport bar.
+        GeometryReader { geo in
+            // Width left for the player after outer padding + left column + gap.
+            let availableWidth = geo.size.width - 40 - leftColumnMinWidth - columnSpacing
+            // Vertical budget for the video surface: window height minus outer
+            // padding and the player chrome above/below the tiles.
+            let availableHeight = geo.size.height - 40 - playerChromeReserve
+            // 4:3 (HW3) is the tallest Tesla footage; sizing to it guarantees
+            // the grid never pushes the transport bar off-screen — 3:2 (HW4)
+            // clips just come out a touch shorter.
+            let heightFittedWidth = availableHeight * (4.0 / 3.0)
+            let playerWidth = max(360, min(playerColumnMaxWidth, availableWidth, heightFittedWidth))
 
-            rightPlayerColumn
-                .frame(maxWidth: playerColumnMaxWidth, alignment: .top)
-                .background(
-                    // LAYOUT: report the player column's natural height up to
-                    // the parent so the left column can match it.
-                    GeometryReader { geo in
-                        Color.clear.preference(
-                            key: RightColumnHeightKey.self,
-                            value: geo.size.height
-                        )
-                    }
-                )
-                .layoutPriority(1)
+            HStack(alignment: .top, spacing: columnSpacing) {
+                leftInfoColumn
+                    .frame(minWidth: leftColumnMinWidth, maxWidth: .infinity, alignment: .topLeading)
+                    // LAYOUT: clamp to the right column's natural height (+12 to
+                    // compensate for the -12 top padding below that lifts the name
+                    // badge to timer level) so Notes can't push past the player.
+                    .frame(
+                        maxHeight: rightColumnHeight > 0 ? rightColumnHeight + 12 : .infinity,
+                        alignment: .top
+                    )
+                    // LAYOUT: pull the name badge up so its frame aligns with the
+                    // wall-clock badge on the right (which sits at .padding(.top, -12)).
+                    .padding(.top, -12)
+
+                rightPlayerColumn
+                    .frame(width: playerWidth, alignment: .top)
+                    .background(
+                        // LAYOUT: report the player column's natural height up to
+                        // the parent so the left column can match it.
+                        GeometryReader { proxy in
+                            Color.clear.preference(
+                                key: RightColumnHeightKey.self,
+                                value: proxy.size.height
+                            )
+                        }
+                    )
+            }
+            // LAYOUT: outer padding around the whole detail page
+            .padding(20)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        // LAYOUT: outer padding around the whole detail page
-        .padding(20)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onPreferenceChange(RightColumnHeightKey.self) { newValue in
             // Guard against tiny oscillations that would trigger relayout loops.
             if abs(newValue - rightColumnHeight) > 0.5 {
@@ -258,15 +290,30 @@ struct EventDetailView: View {
             if hasHeader { headerChips }
             EventSummarySection(event: event, isGenerating: $isGenerating)
             cameraButtonsRows
-            // LAYOUT: Details + square mini map share one row. Details flexes
-            // to absorb whatever the column's width allows; the map column is
-            // a fixed width so the inner map stays a clean square (the card's
-            // height grows naturally to fit the header + square map).
+            // LAYOUT: Details + mini map share one row. Details flexes to
+            // absorb whatever the column's width allows; the map column is a
+            // fixed width and its height is pinned to the Details card's
+            // measured height so the two sit flush with no gap beneath the map.
             HStack(alignment: .top, spacing: 8) {
                 EventMetadataSection(event: event)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
-                EventMiniMapSection(event: event)
+                    .background(
+                        GeometryReader { proxy in
+                            Color.clear.preference(
+                                key: DetailsHeightKey.self,
+                                value: proxy.size.height
+                            )
+                        }
+                    )
+                EventMiniMapSection(event: event, fillsParent: true)
                     .frame(width: miniMapSize)
+                    .frame(height: detailsHeight > 0 ? detailsHeight : miniMapSize)
+            }
+            .onPreferenceChange(DetailsHeightKey.self) { newValue in
+                // Guard against tiny oscillations that would trigger relayout loops.
+                if abs(newValue - detailsHeight) > 0.5 {
+                    detailsHeight = newValue
+                }
             }
             // LAYOUT: Notes is the only flexible section — it absorbs any slack
             // so the other cards keep their natural sizes.

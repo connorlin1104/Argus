@@ -28,13 +28,17 @@ enum EventSummarizer {
     }
 
     /// Build a short, human-readable summary from a detection summary.
+    /// `videos` are the clips covering this event — their stored detection
+    /// markers become an activity timeline the model can narrate from.
     /// Falls back to a deterministic string if the model is unavailable.
     @MainActor
-    static func summarize(event: Event, detection: DetectionSummary?) async -> String {
+    static func summarize(event: Event,
+                          detection: DetectionSummary?,
+                          videos: [VideoRecording] = []) async -> String {
         // Build facts on the main actor so the @Model-backed `event` never
         // crosses an actor boundary — then hand the resulting Sendable string
         // to the off-actor model call below.
-        let factsBlock = buildFacts(event: event, detection: detection)
+        let factsBlock = buildFacts(event: event, detection: detection, videos: videos)
         return await summarize(facts: factsBlock)
     }
 
@@ -48,17 +52,23 @@ enum EventSummarizer {
                 return deterministicSummary(facts: factsBlock)
             }
             let instructions = """
-            You write a 2–3 sentence summary of a Tesla Sentry Mode event for \
+            You narrate what happens in a Tesla Sentry Mode dashcam event for \
             the vehicle owner, using only the supplied facts.
 
             Rules:
-            - Use only facts listed. Do not invent passengers, gestures, emotions, \
-              dialog, weather, time of day, or anything not in the facts.
-            - If no detection facts are given, write one sentence noting the trigger, \
-              camera, and place, then say on-device analysis has not been run.
+            - Describe the activity itself, like a brief play-by-play of the \
+              clip: who or what appeared, when, on which camera, how close they \
+              came, how long they stayed, and when they left.
+            - Do NOT mention the street address, city, zone, GPS coordinates, \
+              or the date — that information is already shown next to the summary.
+            - Use only facts listed. Do not invent actions, passengers, gestures, \
+              emotions, dialog, weather, time of day, or anything not in the facts.
+            - If no detection or timeline facts are given, write one sentence \
+              noting what triggered the recording, then say the clip hasn't been \
+              analyzed yet.
             - Never repeat raw units like milliseconds, "ms", frame counts, \
-              "bbox", or 0-to-1 scores. Use plain English ("about 30 seconds", \
-              "roughly 2 meters"). Round to whole numbers.
+              "bbox", or 0-to-1 scores. Use plain English ("about 30 seconds in", \
+              "roughly 2 meters away"). Round to whole numbers.
             - Name cameras as Front, Rear, Left, or Right. If the camera is missing, \
               say "one of the cameras".
             - Plain prose, 2–3 sentences, no bullet lists, no markdown, no headings.
@@ -81,23 +91,27 @@ enum EventSummarizer {
     }
 
     /// Public on the main actor so callers (e.g. AutoSummaryRunner) can
-    /// pre-build the facts string while they still hold the SwiftData model,
+    /// pre-build the facts string while they still hold the SwiftData models,
     /// then hand the string off to the off-actor `summarize(facts:)`.
     @MainActor
-    static func makeFacts(event: Event, detection: DetectionSummary?) -> String {
-        buildFacts(event: event, detection: detection)
+    static func makeFacts(event: Event,
+                          detection: DetectionSummary?,
+                          videos: [VideoRecording] = []) -> String {
+        buildFacts(event: event, detection: detection, videos: videos)
     }
 
-    private static func buildFacts(event: Event, detection: DetectionSummary?) -> String {
+    /// Facts fed to the model. Deliberately excludes location/date metadata
+    /// (address, city, zone, timestamp) — that's already visible in the
+    /// Details card, and the summary should describe what happens on screen.
+    @MainActor
+    private static func buildFacts(event: Event,
+                                   detection: DetectionSummary?,
+                                   videos: [VideoRecording]) -> String {
         var lines: [String] = []
-        lines.append("- timestamp: \(event.timestamp.formatted(date: .abbreviated, time: .standard))")
         let camName = TeslaCamera.displayName(for: event.camera)
         if !camName.isEmpty {
             lines.append("- triggering camera: \(camName)")
         }
-        if !event.city.isEmpty { lines.append("- city: \(event.city)") }
-        if !event.address.isEmpty { lines.append("- address: \(event.address)") }
-        if !event.zone.isEmpty { lines.append("- zone: \(event.zone)") }
         if !event.reason.isEmpty {
             lines.append("- trigger reason: \(humanizeReason(event.reason))")
         }
@@ -128,7 +142,70 @@ enum EventSummarizer {
                 lines.append("- plate read: \(plate)")
             }
         }
+        let timeline = timelineFacts(videos: videos)
+        if !timeline.isEmpty {
+            lines.append("Activity timeline (times are minutes:seconds from the start of the clip):")
+            lines.append(contentsOf: timeline)
+        }
         return lines.joined(separator: "\n")
+    }
+
+    /// Reconstruct per-camera activity intervals from the detection markers
+    /// the analyzer stored on each clip — this is what lets the model narrate
+    /// what happened over time ("a person came into view, stayed a minute,
+    /// then left") instead of restating metadata.
+    @MainActor
+    private static func timelineFacts(videos: [VideoRecording]) -> [String] {
+        // TUNING: markers are sampled a few times per second; gaps longer than
+        // this many seconds split one sighting into two separate intervals.
+        let mergeGap = 4.0
+        // TUNING: cap the prompt size — beyond this the extra lines add noise,
+        // not narrative.
+        let maxLines = 12
+
+        var lines: [String] = []
+        for video in videos.sorted(by: { $0.camera < $1.camera }) {
+            let camName = TeslaCamera.displayName(for: video.camera)
+            let cam = camName.isEmpty ? "one of the cameras" : "\(camName) camera"
+            let byKind = Dictionary(grouping: video.markers, by: \.kind)
+            for (kind, markers) in byKind.sorted(by: { $0.key < $1.key }) {
+                let label: String
+                switch kind {
+                case "human": label = "a person"
+                case "vehicle": label = "a vehicle"
+                case "licensePlate": label = "a license plate"
+                default: label = kind
+                }
+                // Merge the raw per-frame markers into continuous sightings.
+                let times = markers.map { Double($0.timestampMs) / 1000 }.sorted()
+                var intervals: [(start: Double, end: Double)] = []
+                for t in times {
+                    if let last = intervals.last, t - last.end <= mergeGap {
+                        intervals[intervals.count - 1].end = t
+                    } else {
+                        intervals.append((t, t))
+                    }
+                }
+                for interval in intervals {
+                    if interval.end - interval.start < 2 {
+                        lines.append("- \(cam): \(label) seen briefly around \(clockString(interval.start))")
+                    } else {
+                        lines.append("- \(cam): \(label) in view from \(clockString(interval.start)) to \(clockString(interval.end)) (about \(formatSeconds(interval.end - interval.start)))")
+                    }
+                }
+            }
+        }
+        if lines.count > maxLines {
+            lines = Array(lines.prefix(maxLines))
+            lines.append("- (additional shorter sightings omitted)")
+        }
+        return lines
+    }
+
+    /// Formats seconds as `M:SS` for timeline facts.
+    private static func clockString(_ seconds: Double) -> String {
+        let s = max(0, Int(seconds.rounded()))
+        return String(format: "%d:%02d", s / 60, s % 60)
     }
 
     /// Round meters to the nearest half so the model sees "about 2 meters"

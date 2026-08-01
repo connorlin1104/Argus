@@ -26,6 +26,12 @@ import CoreLocation
 struct EventMiniMapSection: View {
     let event: Event
 
+    /// LAYOUT: when true the map fills whatever frame the parent imposes
+    /// (macOS detail column pins it to the Details card's height). When false
+    /// the map sizes its own height from its width via a 1.1 aspect ratio
+    /// (iOS compact layout).
+    var fillsParent: Bool = false
+
     /// All favorited events — the persistent reference set drawn as pins.
     @Query(filter: #Predicate<Event> { $0.isFavorite })
     private var favoriteEvents: [Event]
@@ -57,7 +63,7 @@ struct EventMiniMapSection: View {
             mapBody(center: firstFav.coord)
         } else {
             // No coords anywhere — explain why the map is empty.
-            VStack(spacing: 8) {
+            let placeholder = VStack(spacing: 8) {
                 Image(systemName: "mappin.slash")
                     .font(.title2)
                     .foregroundStyle(.secondary)
@@ -66,13 +72,42 @@ struct EventMiniMapSection: View {
                     .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity)
-            .aspectRatio(1, contentMode: .fit)
+            if fillsParent {
+                placeholder.frame(maxHeight: .infinity)
+            } else {
+                placeholder.aspectRatio(1, contentMode: .fit)
+            }
         }
     }
 
     @ViewBuilder
     private func mapBody(center: CLLocationCoordinate2D) -> some View {
-        // LAYOUT: 1:1 aspect — the parent column controls actual size.
+        // LAYOUT: fillsParent → fill the imposed frame snugly; otherwise size
+        // height from width with a 1.1 aspect ratio (iOS compact layout).
+        Group {
+            if fillsParent {
+                mapContent
+            } else {
+                mapContent.aspectRatio(1.1, contentMode: .fit)
+            }
+        }
+        .overlay(alignment: .topLeading) {
+            if let cluster = pickerCluster {
+                clusterPicker(cluster)
+                    .padding(8)
+            }
+        }
+        .onAppear { recenter(on: center) }
+        .onChange(of: currentCoord?.latitude) { _, _ in
+            if let c = currentCoord { recenter(on: c) }
+        }
+        .onChange(of: selectedClusterID) { _, newID in
+            handleSelection(newID)
+        }
+    }
+
+    /// The Map itself, shared by both sizing branches of `mapBody`.
+    private var mapContent: some View {
         Map(position: $cameraPosition, selection: $selectedClusterID) {
             // Pin the current event (distinct accent tint + "location" glyph)
             // so users can read this map at a glance even before they look
@@ -94,20 +129,6 @@ struct EventMiniMapSection: View {
             }
         }
         .mapStyle(.standard(elevation: .flat))
-        .aspectRatio(1.1, contentMode: .fit)
-        .overlay(alignment: .topLeading) {
-            if let cluster = pickerCluster {
-                clusterPicker(cluster)
-                    .padding(8)
-            }
-        }
-        .onAppear { recenter(on: center) }
-        .onChange(of: currentCoord?.latitude) { _, _ in
-            if let c = currentCoord { recenter(on: c) }
-        }
-        .onChange(of: selectedClusterID) { _, newID in
-            handleSelection(newID)
-        }
     }
 
     // MARK: - Cluster picker overlay
