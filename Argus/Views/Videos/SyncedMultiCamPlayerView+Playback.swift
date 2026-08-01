@@ -38,7 +38,7 @@ extension SyncedMultiCamPlayerView {
             // De-duplicate: if we already created a player for this canonical camera, skip.
             if newPlayers[camKey] != nil { continue }
 
-            guard let url = resolveBookmark(bookmarkData: video.bookmark) else {
+            guard let url = BookmarkResolver.resolveURL(for: video) else {
                 print("SyncedMultiCamPlayerView: failed to resolve bookmark for camera \(camKey)")
                 continue
             }
@@ -193,19 +193,4 @@ extension SyncedMultiCamPlayerView {
         }
     }
 
-    // MARK: - Bookmark resolution
-
-    func resolveBookmark(bookmarkData: Data) -> URL? {
-        var isStale = false
-        do {
-            #if os(iOS)
-            return try URL(resolvingBookmarkData: bookmarkData, bookmarkDataIsStale: &isStale)
-            #else
-            return try URL(resolvingBookmarkData: bookmarkData, options: .withSecurityScope, bookmarkDataIsStale: &isStale)
-            #endif
-        } catch {
-            print("Bookmark resolution error: \(error)")
-            return nil
-        }
-    }
 }

@@ -142,6 +142,22 @@ func importEvent(eventJSONURL: URL, videoFiles: [URL]) async -> (event: Event, v
                                 reason: reason,
                                 timestamp: timestamp)
 
+        // Read real durations from the assets instead of assuming 60s.
+        // Loaded concurrently — it's a metadata-only read, and awaiting each
+        // clip one-by-one dominated import time on big folders.
+        let durations: [URL: TimeInterval] = await withTaskGroup(
+            of: (URL, TimeInterval?).self
+        ) { group in
+            for file in videoFiles {
+                group.addTask { (file, await videoDurationSeconds(url: file)) }
+            }
+            var result: [URL: TimeInterval] = [:]
+            for await (file, seconds) in group {
+                if let seconds { result[file] = seconds }
+            }
+            return result
+        }
+
         var videos: [VideoRecording] = []
         for file in videoFiles {
             let (parsedStart, cameraName) = parseFilename(file.lastPathComponent)
@@ -149,8 +165,7 @@ func importEvent(eventJSONURL: URL, videoFiles: [URL]) async -> (event: Event, v
                 continue
             }
 
-            // Read real duration from the asset instead of assuming 60s.
-            let durationSeconds = await videoDurationSeconds(url: file) ?? 60
+            let durationSeconds = durations[file] ?? 60
             let endTime = startTime.addingTimeInterval(durationSeconds)
 
             let bookmarkData: Data

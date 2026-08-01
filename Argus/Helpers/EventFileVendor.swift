@@ -29,7 +29,7 @@ enum EventFileVendor {
     static func vend(video: VideoRecording,
                      stagingRoot: URL,
                      subfolder: String? = nil) throws -> URL {
-        guard let source = try resolveBookmark(video.bookmark) else {
+        guard let source = BookmarkResolver.resolveURL(for: video) else {
             throw VendorError.bookmarkResolutionFailed
         }
         let didAccess = source.startAccessingSecurityScopedResource()
@@ -80,13 +80,4 @@ enum EventFileVendor {
         }
     }
 
-    private static func resolveBookmark(_ data: Data) throws -> URL? {
-        var isStale = false
-        #if os(iOS)
-        return try URL(resolvingBookmarkData: data, bookmarkDataIsStale: &isStale)
-        #else
-        return try URL(resolvingBookmarkData: data, options: .withSecurityScope,
-                       bookmarkDataIsStale: &isStale)
-        #endif
-    }
 }

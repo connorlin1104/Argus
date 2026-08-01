@@ -97,36 +97,16 @@ struct VideoRow: View {
 
     private func loadThumbnail() async {
         guard thumbnail == nil else { return }
-        guard let url = resolve() else { return }
-        let didAccess = url.startAccessingSecurityScopedResource()
-        defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
-        let asset = AVURLAsset(url: url)
-        let gen = AVAssetImageGenerator(asset: asset)
-        gen.appliesPreferredTrackTransform = true
-        // TUNING: max thumb size — bigger = sharper but more memory.
-        gen.maximumSize = CGSize(width: 384, height: 216)
-        do {
-            let (cgImage, _) = try await gen.image(at: CMTime(seconds: 1, preferredTimescale: 600))
-            #if os(macOS)
-            thumbnail = Image(nsImage: NSImage(cgImage: cgImage, size: .zero))
-            #else
-            thumbnail = Image(uiImage: UIImage(cgImage: cgImage))
-            #endif
-        } catch {
-            // leave nil; row will show placeholder
-        }
-    }
-
-    private func resolve() -> URL? {
-        do {
-            var isStale = false
-            #if os(iOS)
-            return try URL(resolvingBookmarkData: video.bookmark, bookmarkDataIsStale: &isStale)
-            #else
-            return try URL(resolvingBookmarkData: video.bookmark, options: .withSecurityScope, bookmarkDataIsStale: &isStale)
-            #endif
-        } catch {
-            return nil
-        }
+        // Memory → disk → generate-from-video, all handled by the cache so
+        // scrolling doesn't hit the (often external) source drive twice.
+        guard let cgImage = await ThumbnailCache.thumbnail(
+            forPath: video.url.path,
+            bookmark: video.bookmark
+        ) else { return }
+        #if os(macOS)
+        thumbnail = Image(nsImage: NSImage(cgImage: cgImage, size: .zero))
+        #else
+        thumbnail = Image(uiImage: UIImage(cgImage: cgImage))
+        #endif
     }
 }

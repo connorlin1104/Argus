@@ -5,6 +5,13 @@
 //  The primary list of imported Sentry events. Handles search, smart-filter
 //  chips, multi-select, import, and navigation into EventDetailView.
 //
+//  Structure: the thin outer EventsListView owns the filter state and
+//  rebuilds EventsListRoot whenever a filter changes. The root's @Query is
+//  constructed in init from that filter snapshot, so archived/favorites/tag/
+//  week/zone filtering and sorting all run in the SwiftData store instead of
+//  fetching every event and filtering in memory. Only free-text search stays
+//  in-memory (EventSearchMatcher spans fields a #Predicate can't express).
+//
 //  Sub-components:
 //   - EventRow                   — single row in the list
 //   - EventChips                 — ZoneChip / TagChip / ScoreBadge
@@ -23,16 +30,31 @@ import SwiftUI
 import SwiftData
 
 struct EventsListView: View {
-    @Environment(\.modelContext) private var modelContext
-    @Query(sort: [SortDescriptor(\Event.timestamp, order: .reverse)])
-    private var events: [Event]
+    @State private var filterState = EventsListFilterState()
 
     /// Needed by the At Home / At Work smart-filter chips so they can map
     /// the user's zone names to the icon family the user picked.
     @Query(sort: \Geofence.name) private var fences: [Geofence]
 
+    var body: some View {
+        // Reading filterState inside EventsListRoot.init is tracked by this
+        // body, so any filter change re-creates the root with a fresh query.
+        EventsListRoot(filterState: filterState, fences: fences)
+    }
+}
+
+private struct EventsListRoot: View {
+    @Environment(\.modelContext) private var modelContext
+    @Bindable var filterState: EventsListFilterState
+
+    /// Filter + sort applied store-side; see descriptor(for:fences:).
+    @Query private var events: [Event]
+
+    /// fetchLimit-1 probe used only to distinguish "no events imported yet"
+    /// (hero import UI) from "current filter matches nothing".
+    @Query private var anyEvent: [Event]
+
     // === Extracted state ===
-    @State private var filterState = EventsListFilterState()
     @State private var selection = EventsListSelection()
     /// macOS folder picker. iOS dropped the folder option entirely: the system
     /// folder picker doesn't surface an "Open" affordance for USB / SD storage
@@ -50,6 +72,9 @@ struct EventsListView: View {
     @State private var exportProgress: Double = 0
     @State private var exportLabel: String = ""
     @State private var exportedZipURL: URL? = nil
+    /// Non-nil when the finished zip is missing clips (unplugged drive etc.);
+    /// shown as a warning on the success pane.
+    @State private var exportWarning: String? = nil
 
     // === Navigation ===
     /// NAV: typed path for the events tab. Push events with `path.append(event)`.
@@ -61,11 +86,84 @@ struct EventsListView: View {
     @State private var renamingEvent: Event? = nil
     @State private var renameDraft: String = ""
 
+    init(filterState: EventsListFilterState, fences: [Geofence]) {
+        self.filterState = filterState
+        _events = Query(Self.descriptor(for: filterState, fences: fences))
+        var probe = FetchDescriptor<Event>()
+        probe.fetchLimit = 1
+        _anyEvent = Query(probe)
+    }
+
+    // MARK: - Query construction
+
+    /// Translate the filter state into a store-side fetch. Comparisons that
+    /// don't involve the model are precomputed into flags so the #Predicate
+    /// body only contains model-field expressions SwiftData can translate.
+    private static func descriptor(
+        for state: EventsListFilterState,
+        fences: [Geofence]
+    ) -> FetchDescriptor<Event> {
+        let showArchived = state.showArchived
+        let favoritesOnly = state.favoritesOnly || state.smartFilter == .starred
+        let tagFilter = state.tagFilter
+        let anyTag = tagFilter == "all"
+        let cutoff: Date = state.smartFilter == .thisWeek
+            ? Date().addingTimeInterval(-7 * 24 * 60 * 60)
+            : .distantPast
+
+        // At Home / At Work match by the icon family of the fence, not the
+        // literal zone name, so "Dad's house" with the house icon still
+        // falls under "At Home".
+        var zoneNames: [String] = []
+        var inZoneNames = false
+        var outsideZoneOnly = false
+        switch state.smartFilter {
+        case .atHome:
+            zoneNames = Array(GeofenceCategory.homeZoneNames(in: fences))
+            inZoneNames = true
+        case .atWork:
+            zoneNames = Array(GeofenceCategory.workZoneNames(in: fences))
+            inZoneNames = true
+        case .outsideZone:
+            outsideZoneOnly = true
+        case .all, .starred, .thisWeek:
+            break
+        }
+
+        let predicate = #Predicate<Event> { event in
+            (showArchived || !event.isArchived)
+            && (!favoritesOnly || event.isFavorite)
+            && (anyTag || event.tag == tagFilter)
+            && event.timestamp >= cutoff
+            && (!inZoneNames || zoneNames.contains(event.zone))
+            // `== ""` rather than .isEmpty — SwiftData mistranslates .isEmpty
+            // on stored strings and the clause silently matches nothing.
+            && (!outsideZoneOnly || event.zone == "")
+        }
+
+        let sort: [SortDescriptor<Event>]
+        switch state.sortMode {
+        case .newest:
+            sort = [SortDescriptor(\Event.timestamp, order: .reverse)]
+        case .oldest:
+            sort = [SortDescriptor(\Event.timestamp, order: .forward)]
+        case .score:
+            sort = [SortDescriptor(\Event.interestingnessScore, order: .reverse),
+                    SortDescriptor(\Event.timestamp, order: .reverse)]
+        }
+        return FetchDescriptor<Event>(predicate: predicate, sortBy: sort)
+    }
+
     // MARK: - Filter pipeline
 
+    /// Free-text search over the already query-filtered set. This is the only
+    /// remaining in-memory pass.
     var filteredEvents: [Event] {
-        filterState.apply(to: events, fences: fences)
+        guard !filterState.searchText.isEmpty else { return events }
+        return events.filter { EventSearchMatcher.matches(event: $0, query: filterState.searchText) }
     }
+
+    private var hasAnyEvents: Bool { !anyEvent.isEmpty }
 
     // MARK: - Body
 
@@ -74,9 +172,9 @@ struct EventsListView: View {
             content
                 .navigationTitle("Events")
                 #if os(macOS)
-                .navigationSubtitle(events.isEmpty
-                    ? ""
-                    : "\(filteredEvents.count) of \(events.count)")
+                .navigationSubtitle(hasAnyEvents
+                    ? "\(filteredEvents.count) of \(totalEventCount)"
+                    : "")
                 #endif
                 .navigationDestination(for: Event.self) { event in
                     EventDetailView(event: event)
@@ -111,6 +209,7 @@ struct EventsListView: View {
                 progress: $exportProgress,
                 label: $exportLabel,
                 exportedURL: $exportedZipURL,
+                warning: $exportWarning,
                 onDismiss: { exportInProgress = false }
             )
         }
@@ -124,9 +223,17 @@ struct EventsListView: View {
         }
     }
 
+    #if os(macOS)
+    /// Total row count for the "X of Y" subtitle. A COUNT query — cheap even
+    /// on big libraries, and re-evaluated whenever the filtered query updates.
+    private var totalEventCount: Int {
+        (try? modelContext.fetchCount(FetchDescriptor<Event>())) ?? 0
+    }
+    #endif
+
     @ViewBuilder
     private var content: some View {
-        if events.isEmpty {
+        if !hasAnyEvents {
             emptyState
         } else {
             populatedContent
@@ -244,7 +351,7 @@ struct EventsListView: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        if !events.isEmpty {
+        if hasAnyEvents {
             #if os(iOS)
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button(selection.isSelecting ? "Done" : "Select") {
@@ -315,10 +422,11 @@ struct EventsListView: View {
         exportLabel = "Preparing…"
         exportInProgress = true
         exportedZipURL = nil
+        exportWarning = nil
 
         Task { @MainActor in
             do {
-                let zipURL = try await EventExporter.export(
+                let result = try await EventExporter.export(
                     events: selected,
                     modelContext: modelContext,
                     progress: { p, label in
@@ -326,7 +434,11 @@ struct EventsListView: View {
                         exportLabel = label
                     }
                 )
-                exportedZipURL = zipURL
+                if !result.skippedClips.isEmpty {
+                    let n = result.skippedClips.count
+                    exportWarning = "\(n) file\(n == 1 ? "" : "s") couldn't be read and \(n == 1 ? "is" : "are") missing from the zip — is the source drive still connected? Missing: \(result.skippedClips.joined(separator: ", "))"
+                }
+                exportedZipURL = result.zipURL
                 exportLabel = "Done"
             } catch {
                 exportLabel = "Failed: \(error.localizedDescription)"

@@ -49,6 +49,7 @@ enum EventsImportRunner {
 
     @MainActor
     private static func runImport(url: URL, modelContext: ModelContext) async {
+        ImportFollowUpScheduler.shared.importWillStart()
         let didAccess = url.startAccessingSecurityScopedResource()
         defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
 
@@ -58,6 +59,7 @@ enum EventsImportRunner {
 
     @MainActor
     private static func runFilesImport(urls: [URL], modelContext: ModelContext) async {
+        ImportFollowUpScheduler.shared.importWillStart()
         // Each picked URL carries its own security scope; we have to start it
         // before reading the file and stop it when we're done.
         let accessed: [URL] = urls.filter { $0.startAccessingSecurityScopedResource() }
@@ -109,39 +111,30 @@ enum EventsImportRunner {
         }
         print("Import: events +\(tally.insertedEvents)/-\(tally.skippedEvents), videos +\(tally.insertedVideos)/-\(tally.skippedVideos)")
 
-        // AI: always backfill summaries for freshly imported events when the
-        // on-device model is available. The toggle that used to gate this was
-        // removed — there's no downside to running it.
-        if EventSummarizer.isAvailable && !freshlyInserted.isEmpty {
-            autoSummaryRunner.run(events: freshlyInserted, modelContext: modelContext)
-        }
-
-        // Vision: auto-scan the new clips for people / vehicles / plates so
-        // detection markers and tags appear without pressing "Scan clips".
-        // Skipped if a scan is already running (the batch progress state is
-        // single-flight); the manual button covers that rare case.
-        if !freshlyInsertedVideos.isEmpty && !VideoAnalyzer.shared.isAnalyzing {
-            let newVideos = freshlyInsertedVideos
-            Task { @MainActor in
-                await VideoAnalysisRunner.runAnalysis(
-                    videos: newVideos,
-                    analyzer: VideoAnalyzer.shared,
-                    modelContext: modelContext
-                )
-            }
-        }
+        // Autonomous follow-ups (AI summaries + Vision clip scans) are queued
+        // rather than started here: the scheduler waits until every in-flight
+        // import has landed plus a quiet period, then runs the merged batch.
+        ImportFollowUpScheduler.shared.importDidFinish(
+            events: freshlyInserted,
+            videos: freshlyInsertedVideos,
+            modelContext: modelContext
+        )
     }
 
     // MARK: - Dedupe sets
 
     private static func currentVideoPaths(modelContext: ModelContext) -> Set<String> {
-        let descriptor = FetchDescriptor<VideoRecording>()
+        // propertiesToFetch keeps the dedupe pass from materializing every
+        // stored field (bookmarks, marker JSON) for every row.
+        var descriptor = FetchDescriptor<VideoRecording>()
+        descriptor.propertiesToFetch = [\.url]
         let existing = (try? modelContext.fetch(descriptor)) ?? []
         return Set(existing.map { $0.url.path })
     }
 
     private static func currentEventKeys(modelContext: ModelContext) -> Set<String> {
-        let descriptor = FetchDescriptor<Event>()
+        var descriptor = FetchDescriptor<Event>()
+        descriptor.propertiesToFetch = [\.source, \.camera, \.timestamp]
         let existing = (try? modelContext.fetch(descriptor)) ?? []
         return Set(existing.map(eventKey))
     }

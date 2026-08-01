@@ -12,6 +12,20 @@ import SwiftData
 
 enum VideoAnalysisRunner {
 
+    /// TUNING: how many clips run through Vision at once. Detection is
+    /// CPU/Neural-Engine heavy, so a small window overlaps file I/O with
+    /// compute without starving the UI; higher values give diminishing
+    /// returns and can thrash on thermally-limited devices.
+    private static let maxConcurrentScans = 2
+
+    /// The Sendable slice of a VideoRecording that the off-main detection
+    /// tasks need — @Model objects themselves must stay on the main actor.
+    private struct ScanItem: Sendable {
+        let index: Int
+        let url: URL
+        let vfovDegrees: Double
+    }
+
     @MainActor
     static func runAnalysis(
         videos: [VideoRecording],
@@ -21,61 +35,111 @@ enum VideoAnalysisRunner {
         analyzer.beginBatch(total: videos.count)
         defer { analyzer.endBatch() }
 
-        for video in videos {
-            guard let videoURL = resolveBookmark(bookmarkData: video.bookmark) else {
+        // Resolve bookmarks up front on the main actor; only Sendable data
+        // (URL + FOV) crosses into the detection tasks.
+        var items: [ScanItem] = []
+        for (index, video) in videos.enumerated() {
+            guard let url = BookmarkResolver.resolveURL(for: video) else {
                 analyzer.tickBatch(label: "Skipped (bookmark)")
                 continue
             }
-            let didAccess = videoURL.startAccessingSecurityScopedResource()
-            defer { if didAccess { videoURL.stopAccessingSecurityScopedResource() } }
+            let (_, cameraName) = parseFilename(url.lastPathComponent)
+            items.append(ScanItem(
+                index: index,
+                url: url,
+                vfovDegrees: TeslaCamera.verticalFOVDegrees(for: cameraName)
+            ))
+        }
 
-            analyzer.currentTaskLabel = "Analyzing \(videoURL.lastPathComponent)"
-            let (startTime, cameraName) = parseFilename(videoURL.lastPathComponent)
-            let detections = await analyzer.analyzeVideo(url: videoURL, cameraID: cameraName)
-            let summary = VideoAnalyzer.summarize(detections: detections)
-            let tag = classifyEventTag(summary)
-
-            // Persist detection markers so the scrubber can show them later.
-            let markers = detections.map {
-                DetectionMarker(kind: $0.kind.rawValue, timestampMs: $0.timestampMs)
-            }
-            video.setMarkers(markers)
-
-            if analyzer.firstProximityEvent(in: detections) != nil,
-               let startTime {
-                // Dedupe: if an existing event's timestamp falls within this
-                // video's recording window, enrich it instead of inserting a
-                // duplicate. Imported Sentry events already cover the incident;
-                // the scan just adds the score/tag/AI summary.
-                if let existing = existingEvent(
-                    inWindow: startTime...video.endTime,
-                    modelContext: modelContext
-                ) {
-                    if summary.score > existing.interestingnessScore {
-                        existing.interestingnessScore = summary.score
-                    }
-                    if existing.tag == "unknown" {
-                        existing.tag = tag.rawValue
-                    }
-                    if existing.summary.isEmpty {
-                        existing.summary = await EventSummarizer.summarize(
-                            event: existing,
-                            detection: summary
-                        )
-                    }
-                } else {
-                    let event = buildEvent(
-                        cameraName: cameraName,
-                        startTime: startTime,
-                        summary: summary,
-                        tag: tag
+        // Sliding window: at most maxConcurrentScans clips are in Vision at
+        // any moment. Results are applied on the main actor as each clip
+        // finishes, so the model writes stay serialized while detection
+        // overlaps across clips.
+        await withTaskGroup(of: (index: Int, detections: [Detection]).self) { group in
+            var next = 0
+            func addNextScan() {
+                guard next < items.count else { return }
+                let item = items[next]
+                next += 1
+                group.addTask {
+                    let didAccess = item.url.startAccessingSecurityScopedResource()
+                    defer { if didAccess { item.url.stopAccessingSecurityScopedResource() } }
+                    let detections = await DetectionEngine.runDetections(
+                        url: item.url,
+                        vfovDegrees: item.vfovDegrees
                     )
-                    event.summary = await EventSummarizer.summarize(event: event, detection: summary)
-                    modelContext.insert(event)
+                    return (item.index, detections)
                 }
-                do { try modelContext.save() } catch { print("save failed: \(error)") }
             }
-            analyzer.tickBatch(label: "Done \(videoURL.lastPathComponent)")
+            for _ in 0..<maxConcurrentScans { addNextScan() }
+
+            while let result = await group.next() {
+                addNextScan()
+                let video = videos[result.index]
+                await apply(
+                    detections: result.detections,
+                    to: video,
+                    analyzer: analyzer,
+                    modelContext: modelContext
+                )
+                analyzer.tickBatch(label: "Done \(video.url.lastPathComponent)")
+            }
+        }
+    }
+
+    /// Write one clip's detection results back into the store: markers on the
+    /// VideoRecording, plus an enriched or freshly inserted Event when a
+    /// human came within the proximity threshold.
+    @MainActor
+    private static func apply(
+        detections: [Detection],
+        to video: VideoRecording,
+        analyzer: VideoAnalyzer,
+        modelContext: ModelContext
+    ) async {
+        let summary = VideoAnalyzer.summarize(detections: detections)
+        let tag = classifyEventTag(summary)
+        let (startTime, cameraName) = parseFilename(video.url.lastPathComponent)
+
+        // Persist detection markers so the scrubber can show them later.
+        let markers = detections.map {
+            DetectionMarker(kind: $0.kind.rawValue, timestampMs: $0.timestampMs)
+        }
+        video.setMarkers(markers)
+
+        if analyzer.firstProximityEvent(in: detections) != nil,
+           let startTime {
+            // Dedupe: if an existing event's timestamp falls within this
+            // video's recording window, enrich it instead of inserting a
+            // duplicate. Imported Sentry events already cover the incident;
+            // the scan just adds the score/tag/AI summary.
+            if let existing = existingEvent(
+                inWindow: startTime...video.endTime,
+                modelContext: modelContext
+            ) {
+                if summary.score > existing.interestingnessScore {
+                    existing.interestingnessScore = summary.score
+                }
+                if existing.tag == "unknown" {
+                    existing.tag = tag.rawValue
+                }
+                if existing.summary.isEmpty {
+                    existing.summary = await EventSummarizer.summarize(
+                        event: existing,
+                        detection: summary
+                    )
+                }
+            } else {
+                let event = buildEvent(
+                    cameraName: cameraName,
+                    startTime: startTime,
+                    summary: summary,
+                    tag: tag
+                )
+                event.summary = await EventSummarizer.summarize(event: event, detection: summary)
+                modelContext.insert(event)
+            }
+            do { try modelContext.save() } catch { print("save failed: \(error)") }
         }
     }
 
@@ -117,17 +181,4 @@ enum VideoAnalysisRunner {
         )
     }
 
-    private static func resolveBookmark(bookmarkData: Data) -> URL? {
-        do {
-            var isStale = false
-            #if os(iOS)
-            return try URL(resolvingBookmarkData: bookmarkData, bookmarkDataIsStale: &isStale)
-            #else
-            return try URL(resolvingBookmarkData: bookmarkData, options: .withSecurityScope, bookmarkDataIsStale: &isStale)
-            #endif
-        } catch {
-            print("Bookmark resolution error: \(error)")
-            return nil
-        }
-    }
 }

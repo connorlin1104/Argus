@@ -40,15 +40,6 @@ class VideoAnalyzer {
 
     // MARK: - Public API
 
-    /// Analyze a video and return all detections (humans, vehicles, license plates).
-    func analyzeVideo(url: URL, cameraID: String) async -> [Detection] {
-        let vfov = TeslaCamera.verticalFOVDegrees(for: cameraID)
-        let result: [Detection] = await Task.detached(priority: .userInitiated) { [url] in
-            return await DetectionEngine.runDetections(url: url, vfovDegrees: vfov)
-        }.value
-        return result
-    }
-
     /// Returns the first timestamp (ms) where a human is closer than the proximity threshold.
     func firstProximityEvent(in detections: [Detection]) -> Int? {
         for d in detections where d.kind == .human {

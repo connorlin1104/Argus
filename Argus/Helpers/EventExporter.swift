@@ -18,40 +18,76 @@ import SwiftData
 
 enum EventExporter {
 
-    enum ExportError: Error {
+    enum ExportError: LocalizedError {
         case noEventsSelected
+        case insufficientDiskSpace(requiredBytes: Int64, availableBytes: Int64)
         case zipFailed(underlying: Error)
+
+        var errorDescription: String? {
+            switch self {
+            case .noEventsSelected:
+                return "No events selected."
+            case .insufficientDiskSpace(let required, let available):
+                let fmt = ByteCountFormatter()
+                return "Not enough free space: the export needs about \(fmt.string(fromByteCount: required)) but only \(fmt.string(fromByteCount: available)) is available."
+            case .zipFailed(let underlying):
+                return "Couldn't create the zip: \(underlying.localizedDescription)"
+            }
+        }
     }
 
-    /// Stages the export bundle and zips it. The result URL points to the
-    /// final zip — the caller is responsible for moving it to its final
-    /// destination (typically via a save panel).
+    struct ExportResult {
+        let zipURL: URL
+        /// Clips that were staged into the zip.
+        let stagedClips: Int
+        /// Source filenames that couldn't be read (unplugged drive, moved
+        /// files) and are therefore missing from the zip.
+        let skippedClips: [String]
+    }
+
+    /// Stages the export bundle and zips it. The result's zipURL points to
+    /// the final zip — the caller is responsible for moving it to its final
+    /// destination (typically via a save panel) and MUST surface
+    /// `skippedClips` to the user: a zip that silently lacks footage is the
+    /// worst failure mode for evidence exports.
     ///
     /// - Parameter progress: invoked on the main actor after each event.
     static func export(events: [Event],
                        modelContext: ModelContext,
-                       progress: @MainActor @escaping (Double, String) -> Void) async throws -> URL {
+                       progress: @MainActor @escaping (Double, String) -> Void) async throws -> ExportResult {
         guard !events.isEmpty else { throw ExportError.noEventsSelected }
 
-        let staging = EventFileVendor.makeStagingRoot(prefix: "events-export")
-        let total = Double(events.count)
-
-        for (i, event) in events.enumerated() {
-            let subfolder = folderName(for: event)
-            // Find the matching videos by timestamp overlap (same predicate
-            // EventDetailView uses).
+        // Pair each event with its matching clips (same timestamp-overlap
+        // predicate EventDetailView uses) before copying anything, so we can
+        // preflight the total size against free disk space.
+        var plan: [(event: Event, videos: [VideoRecording])] = []
+        for event in events {
             let t = event.timestamp
             let descriptor = FetchDescriptor<VideoRecording>(
                 predicate: #Predicate<VideoRecording> { v in
                     v.startTime <= t && v.endTime >= t
                 }
             )
-            let matched = (try? modelContext.fetch(descriptor)) ?? []
+            plan.append((event, (try? modelContext.fetch(descriptor)) ?? []))
+        }
+        try ensureDiskSpace(for: plan.flatMap { $0.videos })
 
-            for video in matched {
-                _ = try? EventFileVendor.vend(video: video,
-                                              stagingRoot: staging,
-                                              subfolder: subfolder)
+        let staging = EventFileVendor.makeStagingRoot(prefix: "events-export")
+        let total = Double(events.count)
+        var stagedClips = 0
+        var skippedClips: [String] = []
+
+        for (i, entry) in plan.enumerated() {
+            let subfolder = folderName(for: entry.event)
+            for video in entry.videos {
+                do {
+                    _ = try EventFileVendor.vend(video: video,
+                                                 stagingRoot: staging,
+                                                 subfolder: subfolder)
+                    stagedClips += 1
+                } catch {
+                    skippedClips.append(video.url.lastPathComponent)
+                }
             }
 
             // Drop an event.json sidecar describing the event.
@@ -60,7 +96,11 @@ enum EventExporter {
                 .appendingPathComponent("event.json")
             try? FileManager.default.createDirectory(at: metaURL.deletingLastPathComponent(),
                                                     withIntermediateDirectories: true)
-            try? writeMetadata(event: event, to: metaURL)
+            do {
+                try writeMetadata(event: entry.event, to: metaURL)
+            } catch {
+                skippedClips.append("event.json (\(subfolder))")
+            }
 
             let label = "Staged \(i + 1)/\(events.count)"
             await MainActor.run { progress(Double(i + 1) / total, label) }
@@ -70,7 +110,31 @@ enum EventExporter {
         // soon as it exists (or if zipping fails) so plaintext video copies
         // don't linger in the temp dir.
         defer { try? FileManager.default.removeItem(at: staging) }
-        return try await zip(directory: staging)
+        let zipURL = try await zip(directory: staging)
+        return ExportResult(zipURL: zipURL, stagedClips: stagedClips, skippedClips: skippedClips)
+    }
+
+    /// Throw before staging if the temp volume can't hold the staged copies
+    /// plus the zip (both exist at once → 2×), with a safety margin.
+    private static func ensureDiskSpace(for videos: [VideoRecording]) throws {
+        var totalBytes: Int64 = 0
+        for video in videos {
+            guard let url = BookmarkResolver.resolveURL(for: video) else { continue }
+            let didAccess = url.startAccessingSecurityScopedResource()
+            defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
+            if let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize {
+                totalBytes += Int64(size)
+            }
+        }
+        let required = totalBytes * 2 + 64 * 1024 * 1024
+        let tempDir = FileManager.default.temporaryDirectory
+        guard let available = try? tempDir
+            .resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+            .volumeAvailableCapacityForImportantUsage
+        else { return }  // capacity unknown — don't block the export on it
+        if available < required {
+            throw ExportError.insufficientDiskSpace(requiredBytes: required, availableBytes: available)
+        }
     }
 
     /// Wraps `NSFileCoordinator(.forUploading:)`. On both platforms this

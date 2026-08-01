@@ -13,19 +13,29 @@ struct EventExportProgressSheet: View {
     @Binding var progress: Double
     @Binding var label: String
     @Binding var exportedURL: URL?
+    /// Non-nil when the zip finished but is missing clips — the user must
+    /// see this before sharing what they may assume is complete footage.
+    @Binding var warning: String?
     let onDismiss: () -> Void
 
     var body: some View {
         VStack(spacing: 16) {
             if let url = exportedURL {
-                Image(systemName: "checkmark.seal.fill")
+                Image(systemName: warning == nil ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
                     .font(.largeTitle)
-                    .foregroundStyle(.green)
-                Text("Export ready")
+                    .foregroundStyle(warning == nil ? AnyShapeStyle(.green) : AnyShapeStyle(.orange))
+                Text(warning == nil ? "Export ready" : "Export incomplete")
                     .font(.headline)
                 Text(url.lastPathComponent)
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
+                if let warning {
+                    Text(warning)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 320)
+                }
                 HStack {
                     ShareLink(item: url) {
                         Label("Save / share…", systemImage: "square.and.arrow.up")

@@ -117,7 +117,25 @@ struct SettingsView: View {
     private var iCloudSection: some View {
         Section("iCloud") {
             Toggle("Sync events & geofences via iCloud", isOn: $iCloudSyncEnabled)
-            Text("Requires iCloud capability enabled in Signing & Capabilities. Restart the app after toggling. VideoRecording stays local (security-scoped bookmarks aren't portable).")
+            // Honest status: the container is built once at launch, so report
+            // what actually happened rather than what the toggle implies.
+            if iCloudSyncEnabled && ArgusApp.cloudSyncRequestedAtLaunch && !ArgusApp.cloudSyncActive {
+                Label("iCloud sync isn't active — the app couldn't start CloudKit (missing iCloud capability or signed-out account). Events, geofences, and watchlist entries are staying on this device only.",
+                      systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            } else if iCloudSyncEnabled != ArgusApp.cloudSyncRequestedAtLaunch {
+                Label("Restart the app to apply this change.",
+                      systemImage: "arrow.clockwise")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if ArgusApp.cloudSyncActive {
+                Label("Sync is active. Synced data includes event GPS locations, plate reads, and geofence coordinates (stored in your private iCloud database).",
+                      systemImage: "checkmark.icloud")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Text("Requires iCloud capability enabled in Signing & Capabilities. Video files and their bookmarks always stay local (security-scoped bookmarks aren't portable).")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

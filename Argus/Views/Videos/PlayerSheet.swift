@@ -273,16 +273,7 @@ struct PlayerSheet: View {
     // MARK: - Bookmark resolution
 
     private func resolveBookmark() -> URL? {
-        do {
-            var isStale = false
-            #if os(iOS)
-            return try URL(resolvingBookmarkData: video.bookmark, bookmarkDataIsStale: &isStale)
-            #else
-            return try URL(resolvingBookmarkData: video.bookmark, options: .withSecurityScope, bookmarkDataIsStale: &isStale)
-            #endif
-        } catch {
-            print("PlayerSheet: bookmark resolution error — \(error)")
-            return nil
-        }
+        // Refreshes + persists the bookmark if the system flags it stale.
+        BookmarkResolver.resolveURL(for: video)
     }
 }
