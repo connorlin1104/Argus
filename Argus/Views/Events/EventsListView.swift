@@ -56,13 +56,10 @@ private struct EventsListRoot: View {
 
     // === Extracted state ===
     @State private var selection = EventsListSelection()
-    /// macOS folder picker. iOS dropped the folder option entirely: the system
-    /// folder picker doesn't surface an "Open" affordance for USB / SD storage
-    /// providers, so the multi-file picker (with Select All) is both more
-    /// reliable and just as fast.
-    #if os(macOS)
+    /// Folder picker, both platforms. On iOS a few USB / SD storage providers
+    /// don't surface an "Open" affordance in the system folder picker, so the
+    /// multi-file picker below stays available as a fallback.
     @State private var showImportView: Bool = false
-    #endif
     #if os(iOS)
     @State private var showImportFilesView: Bool = false
     #endif
@@ -185,11 +182,9 @@ private struct EventsListRoot: View {
                 // between empty and populated states.
                 .searchable(text: $filterState.searchText, prompt: "Search city, plate, summary, name…")
                 .toolbar { toolbarContent }
-                #if os(macOS)
-                .fileImporter(isPresented: $showImportView, allowedContentTypes: [.directory]) { result in
+                .fileImporter(isPresented: $showImportView, allowedContentTypes: [.folder]) { result in
                     EventsImportRunner.handle(result: result, modelContext: modelContext)
                 }
-                #endif
                 #if os(iOS)
                 .fileImporter(
                     isPresented: $showImportFilesView,
@@ -260,14 +255,11 @@ private struct EventsListRoot: View {
                 .frame(maxWidth: 480)
                 .padding(.horizontal, 24)
             #if os(iOS)
-            // BUTTON: empty-state import (iOS) — opens the multi-file picker.
-            // The system folder picker doesn't surface an "Open" affordance
-            // for USB / SD providers, so we standardize on the file picker
-            // (Select All works on every provider).
+            // BUTTON: empty-state import (iOS) — opens the folder picker.
             Button {
-                showImportFilesView = true
+                showImportView = true
             } label: {
-                Label("Import Sentry footage", systemImage: "square.and.arrow.down")
+                Label("Import Sentry folder", systemImage: "square.and.arrow.down")
                     .font(.title3.weight(.semibold))
                     .padding(.horizontal, 16)
                     .padding(.vertical, 6)
@@ -275,11 +267,17 @@ private struct EventsListRoot: View {
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
             .padding(.top, 6)
-            Text("Open your event folder, tap Select All, and pick both event.json and the .mp4 clips. Both are required — event.json carries the metadata, the .mp4s are the footage.")
+            Text("Pick your TeslaCam or SentryClips folder — every event inside is imported automatically.")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 24)
+            // BUTTON: empty-state file fallback (iOS) — for storage providers
+            // whose folder picker won't show an "Open" affordance.
+            Button("Can't open the folder? Select files instead…") {
+                showImportFilesView = true
+            }
+            .font(.footnote)
             #else
             Button {
                 showImportView = true
@@ -387,7 +385,7 @@ private struct EventsListRoot: View {
             )
         }
         #if os(iOS)
-        EventsImportToolbar(showImportFilesView: $showImportFilesView)
+        EventsImportToolbar(showImportView: $showImportView, showImportFilesView: $showImportFilesView)
         #else
         EventsImportToolbar(showImportView: $showImportView)
         #endif

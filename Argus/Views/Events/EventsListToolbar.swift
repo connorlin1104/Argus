@@ -86,23 +86,30 @@ struct EventsFilterMenu: ToolbarContent {
 
 /// "Import" button used on both the empty state and the populated list.
 ///
-/// iOS uses the multi-file picker only: the system folder picker doesn't
-/// surface an "Open" affordance for USB / SD storage providers, and Select
-/// All in the file picker reaches the same outcome on every provider.
-/// macOS keeps the folder picker because its picker handles folders natively.
+/// Both platforms lead with the folder picker. On iOS a few USB / SD storage
+/// providers don't surface an "Open" affordance in the folder picker, so the
+/// menu keeps a multi-file fallback ("Select All" works on every provider).
 struct EventsImportToolbar: ToolbarContent {
+    @Binding var showImportView: Bool
     #if os(iOS)
     @Binding var showImportFilesView: Bool
-    #else
-    @Binding var showImportView: Bool
     #endif
 
     var body: some ToolbarContent {
         // BUTTON: import (top-right cloud-arrow icon)
         ToolbarItem {
             #if os(iOS)
-            Button {
-                showImportFilesView = true
+            Menu {
+                Button {
+                    showImportView = true
+                } label: {
+                    Label("Import Folder…", systemImage: "folder")
+                }
+                Button {
+                    showImportFilesView = true
+                } label: {
+                    Label("Select Files…", systemImage: "doc.on.doc")
+                }
             } label: {
                 Label("Import", systemImage: "square.and.arrow.down")
             }

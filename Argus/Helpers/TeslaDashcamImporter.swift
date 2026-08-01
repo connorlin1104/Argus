@@ -29,38 +29,37 @@ struct ImportResult {
 
 func importEvents(url: URL) async -> ImportResult {
     var result = ImportResult()
-    let fileManager = FileManager.default
 
-    do {
-        let eventDirectories = try fileManager.contentsOfDirectory(
-            at: url,
-            includingPropertiesForKeys: nil,
-            options: []
-        )
-
-        for eventDirectory in eventDirectories {
-            let values = try eventDirectory.resourceValues(forKeys: [.isDirectoryKey])
-
-            if values.isDirectory == false {
-                //Skip files in events directory.
-                continue
-            }
-
-            let eventURL = eventDirectory.appendingPathComponent("event.json")
-            if !fileManager.fileExists(atPath: eventURL.path) {
-                //Skip directories that don't have event.json file in them
-                continue
-            }
-
-            if let (event, videos) = await importEvent(eventURL: eventURL, eventDirectory: eventDirectory) {
-                result.events.append(event)
-                result.videos.append(contentsOf: videos)
-            }
+    for eventDirectory in eventDirectories(under: url) {
+        let eventURL = eventDirectory.appendingPathComponent("event.json")
+        if let (event, videos) = await importEvent(eventURL: eventURL, eventDirectory: eventDirectory) {
+            result.events.append(event)
+            result.videos.append(contentsOf: videos)
         }
-    } catch {
-        print("error \(error)")
     }
     return result
+}
+
+/// Every directory at or under `root` that holds an event.json, descending a
+/// few levels so picking TeslaCam, SentryClips, or a single event folder all
+/// import the same way. Depth-limited so a mistaken pick of a huge unrelated
+/// folder doesn't walk the whole drive.
+private func eventDirectories(under root: URL, depth: Int = 3) -> [URL] {
+    let fileManager = FileManager.default
+    if fileManager.fileExists(atPath: root.appendingPathComponent("event.json").path) {
+        return [root]
+    }
+    guard depth > 0 else { return [] }
+
+    let children = (try? fileManager.contentsOfDirectory(
+        at: root,
+        includingPropertiesForKeys: [.isDirectoryKey],
+        options: []
+    )) ?? []
+
+    return children
+        .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true }
+        .flatMap { eventDirectories(under: $0, depth: depth - 1) }
 }
 
 /// File-based importer used as the iOS fallback when the system folder picker
