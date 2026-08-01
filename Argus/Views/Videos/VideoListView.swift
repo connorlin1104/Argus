@@ -24,7 +24,7 @@ struct VideoListView: View {
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     private var isLandscape: Bool { verticalSizeClass == .compact }
     #endif
-    @State private var videoAnalyzer = VideoAnalyzer()
+    private var videoAnalyzer = VideoAnalyzer.shared
     @State private var playingVideo: VideoRecording?
     var eventTime: Date?
 

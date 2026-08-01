@@ -78,6 +78,8 @@ struct SettingsGeofenceSection: View {
             Spacer()
             Button(role: .destructive) {
                 modelContext.delete(fence)
+                // Strip the deleted zone's label off any events that had it.
+                SettingsBulkActions.recomputeZones(modelContext: modelContext)
             } label: {
                 Image(systemName: "trash")
             }
@@ -94,6 +96,8 @@ struct SettingsGeofenceSection: View {
             radiusMeters: s.radiusMeters
         )
         modelContext.insert(fence)
+        // New zones apply immediately — no manual recompute needed.
+        SettingsBulkActions.recomputeZones(modelContext: modelContext)
         suggestion = nil
     }
 }

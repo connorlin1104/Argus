@@ -24,6 +24,15 @@ enum SettingsBulkActions {
         }
     }
 
+    /// Convenience overload that fetches the current events + fences itself.
+    /// Called automatically whenever the geofence list changes so zone labels
+    /// never go stale (the bulk-actions button remains as a manual fallback).
+    static func recomputeZones(modelContext: ModelContext) {
+        let events = (try? modelContext.fetch(FetchDescriptor<Event>())) ?? []
+        let fences = (try? modelContext.fetch(FetchDescriptor<Geofence>())) ?? []
+        recomputeZones(events: events, fences: fences)
+    }
+
     // MARK: - Trip grouping
 
     /// Re-cluster every event into trips based on time + location gaps.

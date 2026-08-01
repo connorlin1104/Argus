@@ -21,6 +21,11 @@ import CoreGraphics
 @Observable
 @MainActor
 class VideoAnalyzer {
+    /// Single shared instance so the Videos-tab progress chip reflects scans
+    /// no matter who starts them (the toolbar button or the post-import
+    /// auto-run in EventsImportRunner).
+    static let shared = VideoAnalyzer()
+
     // === Live progress state (drives the toolbar UI) ===
     var isAnalyzing: Bool = false
     var progress: Double = 0.0

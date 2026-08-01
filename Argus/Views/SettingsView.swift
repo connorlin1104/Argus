@@ -50,6 +50,8 @@ struct SettingsView: View {
                         iconSymbol: iconSymbol
                     )
                     modelContext.insert(fence)
+                    // New zones apply immediately — no manual recompute needed.
+                    SettingsBulkActions.recomputeZones(modelContext: modelContext)
                 }
             }
         }

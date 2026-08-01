@@ -74,6 +74,7 @@ enum EventsImportRunner {
 
         var tally = ImportTally()
         var freshlyInserted: [Event] = []
+        var freshlyInsertedVideos: [VideoRecording] = []
 
         for event in imported.events {
             if existingEventKeys.contains(eventKey(event)) {
@@ -90,7 +91,15 @@ enum EventsImportRunner {
                 continue
             }
             modelContext.insert(video)
+            freshlyInsertedVideos.append(video)
             tally.insertedVideos += 1
+        }
+
+        // Tag the new events with any geofence they fall inside, so zones
+        // show up right after import instead of waiting for a manual recompute.
+        if !freshlyInserted.isEmpty {
+            let fences = (try? modelContext.fetch(FetchDescriptor<Geofence>())) ?? []
+            SettingsBulkActions.recomputeZones(events: freshlyInserted, fences: fences)
         }
 
         do {
@@ -105,6 +114,21 @@ enum EventsImportRunner {
         // removed — there's no downside to running it.
         if EventSummarizer.isAvailable && !freshlyInserted.isEmpty {
             autoSummaryRunner.run(events: freshlyInserted, modelContext: modelContext)
+        }
+
+        // Vision: auto-scan the new clips for people / vehicles / plates so
+        // detection markers and tags appear without pressing "Scan clips".
+        // Skipped if a scan is already running (the batch progress state is
+        // single-flight); the manual button covers that rare case.
+        if !freshlyInsertedVideos.isEmpty && !VideoAnalyzer.shared.isAnalyzing {
+            let newVideos = freshlyInsertedVideos
+            Task { @MainActor in
+                await VideoAnalysisRunner.runAnalysis(
+                    videos: newVideos,
+                    analyzer: VideoAnalyzer.shared,
+                    modelContext: modelContext
+                )
+            }
         }
     }
 
