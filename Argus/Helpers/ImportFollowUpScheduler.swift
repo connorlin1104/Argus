@@ -104,7 +104,8 @@ final class ImportFollowUpScheduler {
 
         // One batch across all chunks so the Videos-tab progress chip shows
         // overall progress instead of restarting per event.
-        VideoAnalyzer.shared.beginBatch(total: videos.count)
+        let matchedCount = chunks.reduce(0) { $0 + $1.videos.count }
+        VideoAnalyzer.shared.beginBatch(total: matchedCount)
         for chunk in chunks {
             if !chunk.videos.isEmpty {
                 await VideoAnalysisRunner.runAnalysis(
@@ -127,15 +128,10 @@ final class ImportFollowUpScheduler {
             }
         }
         // Clips no event's timestamp falls inside (the other minutes of a
-        // Sentry save) don't gate any summary — they scan last.
-        if !remaining.isEmpty {
-            await VideoAnalysisRunner.runAnalysis(
-                videos: remaining,
-                analyzer: VideoAnalyzer.shared,
-                modelContext: modelContext,
-                manageBatch: false
-            )
-        }
+        // Sentry save) are NOT scanned automatically — sweeping the whole
+        // library pegged the phone for the better part of an hour on big
+        // imports, and the timeline already surfaces those clips. The
+        // Videos tab's manual scan covers them if the user wants markers.
         VideoAnalyzer.shared.endBatch()
     }
 }
