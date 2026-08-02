@@ -19,6 +19,12 @@ final class VideoRecording {
     /// Serialized [DetectionMarker] JSON, written by the analyzer.
     var markersJSON: String = ""
 
+    /// Comma-separated phrases for notable things Vision saw in frames where
+    /// a person was on screen ("a backpack, a box or package"). Written by
+    /// the analyzer; feeds the AI summary so it can say what the person was
+    /// carrying or had with them.
+    var humanContext: String = ""
+
     init(url: URL, bookmark: Data, camera: String, startTime: Date, endTime: Date) {
         self.url = url
         self.bookmark = bookmark

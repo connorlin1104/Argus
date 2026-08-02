@@ -3,7 +3,8 @@
 //  Argus
 //
 //  Plates the user wants flagged when they recur across events. Matched
-//  against DetectionSummary.firstPlateText via WatchlistMatcher.
+//  against the plate reads stored on each event (Event.plateText) via
+//  WatchlistMatcher.
 //
 
 import Foundation

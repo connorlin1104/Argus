@@ -73,6 +73,10 @@ private struct EventsListRoot: View {
     /// shown as a warning on the success pane.
     @State private var exportWarning: String? = nil
 
+    // === Import feedback ===
+    /// Shared banner state every import path (picker, drop, iOS files) feeds.
+    private var importFeedback = ImportFeedback.shared
+
     // === Navigation ===
     /// NAV: typed path for the events tab. Push events with `path.append(event)`.
     @State private var path: [Event] = []
@@ -82,6 +86,11 @@ private struct EventsListRoot: View {
     /// Drives the rename alert below.
     @State private var renamingEvent: Event? = nil
     @State private var renameDraft: String = ""
+
+    // === Delete confirmation ===
+    /// Events pending deletion (single row via context menu, or the whole
+    /// multi-selection). Non-empty drives the confirmation dialog.
+    @State private var pendingDeletion: [Event] = []
 
     init(filterState: EventsListFilterState, fences: [Geofence]) {
         self.filterState = filterState
@@ -167,6 +176,17 @@ private struct EventsListRoot: View {
     var body: some View {
         NavigationStack(path: $path) {
             content
+                // The empty state says "Drop in a Tesla Sentry folder" — this
+                // is what makes that true. Dropped folders run the same import
+                // path as the picker (Finder drags carry read access).
+                .dropDestination(for: URL.self) { urls, _ in
+                    guard !urls.isEmpty else { return false }
+                    for url in urls {
+                        EventsImportRunner.handle(result: .success(url), modelContext: modelContext)
+                    }
+                    return true
+                }
+                .overlay(alignment: .bottom) { importBanner }
                 .navigationTitle("Events")
                 #if os(macOS)
                 .navigationSubtitle(hasAnyEvents
@@ -216,6 +236,26 @@ private struct EventsListRoot: View {
             Button("Save") { commitRename() }
             Button("Cancel", role: .cancel) { renamingEvent = nil }
         }
+        .confirmationDialog(
+            pendingDeletion.count == 1
+                ? "Delete this event?"
+                : "Delete \(pendingDeletion.count) events?",
+            isPresented: Binding(
+                get: { !pendingDeletion.isEmpty },
+                set: { if !$0 { pendingDeletion = [] } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(pendingDeletion.count == 1
+                    ? "Delete event"
+                    : "Delete \(pendingDeletion.count) events",
+                   role: .destructive) {
+                commitDeletion()
+            }
+            Button("Cancel", role: .cancel) { pendingDeletion = [] }
+        } message: {
+            Text("This removes the event\(pendingDeletion.count == 1 ? "" : "s") and \(pendingDeletion.count == 1 ? "its" : "their") clips from the library. The video files stay untouched on disk.")
+        }
     }
 
     #if os(macOS)
@@ -232,6 +272,51 @@ private struct EventsListRoot: View {
             emptyState
         } else {
             populatedContent
+        }
+    }
+
+    // MARK: - Import feedback banner
+
+    /// Floating status shown while an import runs and after it finishes, so
+    /// picking a folder always visibly does something — even when the folder
+    /// held no events or everything was a duplicate.
+    @ViewBuilder
+    private var importBanner: some View {
+        if importFeedback.isImporting {
+            HStack(spacing: 10) {
+                ProgressView().controlSize(.small)
+                Text("Importing…") // TEXT: in-flight import banner
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .liquidGlassCard(cornerRadius: 12)
+            .padding(.bottom, 12)
+        } else if let message = importFeedback.message {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text(message)
+                    .font(.callout)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button {
+                    importFeedback.message = nil
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.borderless)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .frame(maxWidth: 520)
+            .liquidGlassCard(cornerRadius: 12)
+            .padding(.bottom, 12)
+            // Auto-dismiss after a while; a new import resets the clock
+            // because the banner view is re-created for the new message.
+            .task(id: message) {
+                try? await Task.sleep(for: .seconds(8))
+                if importFeedback.message == message {
+                    importFeedback.message = nil
+                }
+            }
         }
     }
 
@@ -254,6 +339,9 @@ private struct EventsListRoot: View {
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: 480)
                 .padding(.horizontal, 24)
+                // Without this the text truncates to one line ("…locatio…")
+                // instead of wrapping when the window is short.
+                .fixedSize(horizontal: false, vertical: true)
             #if os(iOS)
             // BUTTON: empty-state import (iOS) — opens the folder picker.
             Button {
@@ -340,7 +428,11 @@ private struct EventsListRoot: View {
                     if !selection.isSelecting { path.append(event) }
                 }
                 .contextMenu {
-                    EventRowContextMenu(event: event, onRename: { beginRename(event) })
+                    EventRowContextMenu(
+                        event: event,
+                        onRename: { beginRename(event) },
+                        onDelete: { pendingDeletion = [event] }
+                    )
                 }
         }
     }
@@ -373,6 +465,15 @@ private struct EventsListRoot: View {
                     } label: {
                         Label("Export selected (\(selection.selectedIDs.count))",
                               systemImage: "square.and.arrow.up.on.square")
+                    }
+                }
+                ToolbarItem {
+                    // BUTTON: delete selected — confirmed via the shared dialog.
+                    Button(role: .destructive) {
+                        pendingDeletion = selection.resolveSelected(from: events)
+                    } label: {
+                        Label("Delete selected (\(selection.selectedIDs.count))",
+                              systemImage: "trash")
                     }
                 }
             }
@@ -411,6 +512,16 @@ private struct EventsListRoot: View {
         renamingEvent = nil
     }
 
+    // MARK: - Delete
+
+    /// Runs after the confirmation dialog. Also clears any selection so the
+    /// toolbar count doesn't reference rows that no longer exist.
+    private func commitDeletion() {
+        EventDeleter.delete(events: pendingDeletion, modelContext: modelContext)
+        pendingDeletion = []
+        selection.clear()
+    }
+
     // MARK: - Export
 
     private func runExport() {
@@ -432,10 +543,16 @@ private struct EventsListRoot: View {
                         exportLabel = label
                     }
                 )
+                var warnings: [String] = []
+                if !result.eventsWithoutClips.isEmpty {
+                    let n = result.eventsWithoutClips.count
+                    warnings.append("\(n) event\(n == 1 ? " has" : "s have") no matching clips in the library, so \(n == 1 ? "its folder" : "their folders") in the zip contain\(n == 1 ? "s" : "") only metadata: \(result.eventsWithoutClips.joined(separator: "; "))")
+                }
                 if !result.skippedClips.isEmpty {
                     let n = result.skippedClips.count
-                    exportWarning = "\(n) file\(n == 1 ? "" : "s") couldn't be read and \(n == 1 ? "is" : "are") missing from the zip — is the source drive still connected? Missing: \(result.skippedClips.joined(separator: ", "))"
+                    warnings.append("\(n) file\(n == 1 ? "" : "s") couldn't be read and \(n == 1 ? "is" : "are") missing from the zip — is the source drive still connected? Missing: \(result.skippedClips.joined(separator: ", "))")
                 }
+                exportWarning = warnings.isEmpty ? nil : warnings.joined(separator: "\n\n")
                 exportedZipURL = result.zipURL
                 exportLabel = "Done"
             } catch {

@@ -28,7 +28,7 @@ struct EventMetadataSection: View {
                 }
                 if event.tag != "unknown" { row("Behavior", value: event.tag.capitalized) }
                 if event.interestingnessScore > 0 {
-                    row("Score", value: String(format: "%.0f", event.interestingnessScore * 100))
+                    row("Activity", value: ScoreBadge.label(for: event.interestingnessScore))
                 }
             }
         }

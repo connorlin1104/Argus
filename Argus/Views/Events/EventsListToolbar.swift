@@ -16,6 +16,9 @@ struct EventRowContextMenu: View {
     @Environment(\.modelContext) private var modelContext
     let event: Event
     var onRename: (() -> Void)? = nil
+    /// Wired to the parent's confirmation dialog — deletion also removes the
+    /// event's orphaned clips (EventDeleter), so it deserves a confirm step.
+    var onDelete: (() -> Void)? = nil
 
     var body: some View {
         // BUTTON: favorite toggle (context menu)
@@ -44,9 +47,14 @@ struct EventRowContextMenu: View {
         // BUTTON: share / quick-look via EventShareMenu
         EventShareMenu(event: event)
         Divider()
-        // BUTTON: delete (context menu)
+        // BUTTON: delete (context menu) — parent confirms, then EventDeleter
+        // removes the event and any clips no other event references.
         Button(role: .destructive) {
-            modelContext.delete(event)
+            if let onDelete {
+                onDelete()
+            } else {
+                EventDeleter.delete(events: [event], modelContext: modelContext)
+            }
         } label: {
             Label("Delete", systemImage: "trash")
         }

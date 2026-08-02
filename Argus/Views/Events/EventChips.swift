@@ -67,20 +67,31 @@ struct TagChip: View {
 
 // MARK: - Score badge
 
-/// Numeric 0–100 interestingness score badge.
-/// COLOR: red >66, orange >33, yellow otherwise. TUNING below.
+/// Interestingness badge. Shows a plain-language activity level instead of
+/// the raw 0–100 number — "62" meant nothing to users.
+/// COLOR: red = high, orange = moderate, yellow = low. TUNING below.
 struct ScoreBadge: View {
     let score: Double
     var body: some View {
         let pct = max(0, min(1, score))
-        // TUNING: threshold breakpoints for the badge color
+        // TUNING: threshold breakpoints — keep in sync with label(for:)
         let color: Color = pct > 0.66 ? .red : (pct > 0.33 ? .orange : .yellow)
-        Text(String(format: "%.0f", pct * 100))
-            // FONT: monospaced digits so widths stay stable
-            .font(.caption2.monospacedDigit().bold())
+        Text(ScoreBadge.label(for: score))
+            .font(.caption2.bold())
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
             .foregroundStyle(color)
             .liquidGlassChip(tint: color)
+            .help("Activity level estimated from the clip scan (proximity, time on screen, movement)")
+    }
+
+    /// Shared wording so the map popover and any other score readout say the
+    /// same thing as the chip.
+    static func label(for score: Double) -> String {
+        let pct = max(0, min(1, score))
+        // TUNING: threshold breakpoints for the activity wording
+        if pct > 0.66 { return "High activity" }
+        if pct > 0.33 { return "Moderate activity" }
+        return "Low activity"
     }
 }

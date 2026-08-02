@@ -74,20 +74,59 @@ final class ImportFollowUpScheduler {
             if Task.isCancelled { return }
         }
 
-        // AI: backfill summaries for freshly imported events when the
-        // on-device model is available.
-        if EventSummarizer.isAvailable && !events.isEmpty {
-            EventsImportRunner.autoSummaryRunner.run(events: events, modelContext: modelContext)
+        // Event-by-event: scan one event's clips, summarize that event, then
+        // move to the next. Scanning the entire import before writing any
+        // summary left every event with an empty scrubber and a placeholder
+        // summary until the whole batch finished (minutes on big imports);
+        // this way the newest event is fully usable within seconds.
+        var remaining = videos
+        var chunks: [(event: Event, videos: [VideoRecording])] = []
+        for event in events.sorted(by: { $0.timestamp > $1.timestamp }) {
+            let t = event.timestamp
+            let matched = remaining.filter { $0.startTime <= t && $0.endTime >= t }
+            remaining.removeAll { clip in matched.contains { $0 === clip } }
+            // The trigger camera's clip is the one the user opens first —
+            // scan it ahead of the other angles.
+            let triggerCam = TeslaCamera.canonical(event.camera)
+            let ordered = matched.sorted { a, b in
+                (TeslaCamera.canonical(a.camera) == triggerCam ? 0 : 1)
+                    < (TeslaCamera.canonical(b.camera) == triggerCam ? 0 : 1)
+            }
+            chunks.append((event, ordered))
         }
 
-        // Vision: auto-scan the new clips for people / vehicles / plates so
-        // detection markers and tags appear without pressing "Scan clips".
-        if !videos.isEmpty {
+        // One batch across all chunks so the Videos-tab progress chip shows
+        // overall progress instead of restarting per event.
+        VideoAnalyzer.shared.beginBatch(total: videos.count)
+        for chunk in chunks {
+            if !chunk.videos.isEmpty {
+                await VideoAnalysisRunner.runAnalysis(
+                    videos: chunk.videos,
+                    analyzer: VideoAnalyzer.shared,
+                    modelContext: modelContext,
+                    manageBatch: false,
+                    // A chunk is one event's camera angles (~4 clips) and the
+                    // user is actively waiting on it — scan them all at once.
+                    maxConcurrent: 4
+                )
+            }
+            if EventSummarizer.isAvailable {
+                await EventsImportRunner.autoSummaryRunner.runAndWait(
+                    events: [chunk.event],
+                    modelContext: modelContext
+                )
+            }
+        }
+        // Clips no event's timestamp falls inside (the other minutes of a
+        // Sentry save) don't gate any summary — they scan last.
+        if !remaining.isEmpty {
             await VideoAnalysisRunner.runAnalysis(
-                videos: videos,
+                videos: remaining,
                 analyzer: VideoAnalyzer.shared,
-                modelContext: modelContext
+                modelContext: modelContext,
+                manageBatch: false
             )
         }
+        VideoAnalyzer.shared.endBatch()
     }
 }

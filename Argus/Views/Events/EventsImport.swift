@@ -8,6 +8,7 @@
 
 import Foundation
 import SwiftData
+import Observation
 
 /// Result of one import pass: counts shown in the import log.
 struct ImportTally {
@@ -15,6 +16,45 @@ struct ImportTally {
     var insertedVideos = 0
     var skippedEvents = 0
     var skippedVideos = 0
+}
+
+/// Live import status surfaced as a banner in EventsListView. A singleton so
+/// every import path (toolbar picker, iOS file picker, drag-and-drop) reports
+/// into the same place — before this, the tally only went to the console and
+/// a failed or empty import looked like nothing happened.
+@Observable
+@MainActor
+final class ImportFeedback {
+    static let shared = ImportFeedback()
+
+    /// Message describing the last finished import; nil once dismissed.
+    var message: String? = nil
+    /// True while an import pass is reading folders and probing clips.
+    var isImporting: Bool = false
+
+    func begin() {
+        isImporting = true
+        message = nil
+    }
+
+    func finish(tally: ImportTally) {
+        isImporting = false
+        if tally.insertedEvents == 0 && tally.skippedEvents == 0 {
+            message = "No Tesla events found in that folder. Pick a TeslaCam, SavedClips, or SentryClips folder — each event folder needs its event.json."
+        } else if tally.insertedEvents == 0 {
+            message = "Nothing new to import — \(count(tally.skippedEvents, "event")) in that folder \(tally.skippedEvents == 1 ? "is" : "are") already in the library."
+        } else {
+            var text = "Imported \(count(tally.insertedEvents, "event")) with \(count(tally.insertedVideos, "clip"))."
+            if tally.skippedEvents > 0 {
+                text += " Skipped \(count(tally.skippedEvents, "event")) already in the library."
+            }
+            message = text
+        }
+    }
+
+    private func count(_ n: Int, _ noun: String) -> String {
+        "\(n) \(noun)\(n == 1 ? "" : "s")"
+    }
 }
 
 enum EventsImportRunner {
@@ -50,6 +90,7 @@ enum EventsImportRunner {
     @MainActor
     private static func runImport(url: URL, modelContext: ModelContext) async {
         ImportFollowUpScheduler.shared.importWillStart()
+        ImportFeedback.shared.begin()
         let didAccess = url.startAccessingSecurityScopedResource()
         defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
 
@@ -60,6 +101,7 @@ enum EventsImportRunner {
     @MainActor
     private static func runFilesImport(urls: [URL], modelContext: ModelContext) async {
         ImportFollowUpScheduler.shared.importWillStart()
+        ImportFeedback.shared.begin()
         // Each picked URL carries its own security scope; we have to start it
         // before reading the file and stop it when we're done.
         let accessed: [URL] = urls.filter { $0.startAccessingSecurityScopedResource() }
@@ -110,6 +152,7 @@ enum EventsImportRunner {
             print("modelContext.save failed: \(error)")
         }
         print("Import: events +\(tally.insertedEvents)/-\(tally.skippedEvents), videos +\(tally.insertedVideos)/-\(tally.skippedVideos)")
+        ImportFeedback.shared.finish(tally: tally)
 
         // Autonomous follow-ups (AI summaries + Vision clip scans) are queued
         // rather than started here: the scheduler waits until every in-flight

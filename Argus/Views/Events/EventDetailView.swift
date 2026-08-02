@@ -121,7 +121,6 @@ struct EventDetailView: View {
                 regularBody
             }
         }
-        .onAppear { logMatches() }
         .navigationTitle(navigationTitleText)
         #if os(macOS)
         .navigationSubtitle({
@@ -179,7 +178,12 @@ struct EventDetailView: View {
             let playerWidth = max(360, min(playerColumnMaxWidth, availableWidth, heightFittedWidth))
 
             HStack(alignment: .top, spacing: columnSpacing) {
-                leftInfoColumn
+                // LAYOUT: the info column scrolls within the player-height
+                // clamp — long AI summaries or notes used to push the cards
+                // below them clean off the (scroll-less) page.
+                ScrollView(.vertical) {
+                    leftInfoColumn
+                }
                     .frame(minWidth: leftColumnMinWidth, maxWidth: .infinity, alignment: .topLeading)
                     // LAYOUT: clamp to the right column's natural height (+12 to
                     // compensate for the -12 top padding below that lifts the name
@@ -315,11 +319,12 @@ struct EventDetailView: View {
                     detailsHeight = newValue
                 }
             }
-            // LAYOUT: Notes is the only flexible section — it absorbs any slack
-            // so the other cards keep their natural sizes.
+            // LAYOUT: inside the ScrollView the column takes its natural
+            // height, so Notes gets a floor instead of absorbing slack.
             EventNotesSection(event: event)
+                .frame(minHeight: 160)
         }
-        .frame(maxHeight: .infinity, alignment: .top)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
     /// Camera-select buttons. Two rows: [Grid, Front, Rear] then [Left, Right].
@@ -476,14 +481,44 @@ struct EventDetailView: View {
         }
     }
 
-    private func logMatches() {
-        print("EventDetailView: event.timestamp=\(event.timestamp), matchedVideos.count=\(matchedVideos.count)")
-        for v in matchedVideos {
-            print("  - cam=\(v.camera) start=\(v.startTime) end=\(v.endTime) path=\(v.url.lastPathComponent)")
+}
+
+/// Inserts a sample event once the preview's model container is in the
+/// environment, then hosts the real detail view. Creating the event before
+/// the container exists crashes the preview.
+private struct EventDetailPreviewHost: View {
+    @Environment(\.modelContext) private var context
+    @State private var event: Event?
+
+    var body: some View {
+        Group {
+            if let event {
+                EventDetailView(event: event)
+            } else {
+                // Real view (not EmptyView) so onAppear fires and inserts
+                // the sample.
+                Color.clear
+            }
+        }
+        .onAppear {
+            guard event == nil else { return }
+            let sample = Event(
+                source: "Tesla", camera: "5", city: "San Francisco",
+                estLatitude: "37.7749", estLongitude: "-122.4194",
+                reason: "sentry_aware_object_detection", timestamp: .now,
+                interestingnessScore: 0.62, tag: "lingered",
+                summary: "A person approached the rear camera, stayed close for about a minute, then walked away."
+            )
+            context.insert(sample)
+            event = sample
         }
     }
 }
 
 #Preview {
-    //EventDetailView()
+    NavigationStack { EventDetailPreviewHost() }
+        .modelContainer(
+            for: [Event.self, Geofence.self, Watchlist.self, VideoRecording.self],
+            inMemory: true
+        )
 }

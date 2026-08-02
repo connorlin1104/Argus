@@ -19,10 +19,15 @@ import CoreLocation
 
 struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
-    @Query private var allEvents: [Event]
 
     @State private var showPicker: Bool = false
     @State private var summaryRunner = AutoSummaryRunner()
+    /// Shown in the bulk-actions footer. A cached count instead of an
+    /// @Query over every Event — the query materialized the whole library
+    /// each time the Settings tab appeared.
+    @State private var eventCount: Int = 0
+    /// Confirmation gate for the destructive "Delete all events" action.
+    @State private var confirmDeleteAll: Bool = false
 
     @AppStorage(ArgusApp.iCloudSyncDefaultsKey)
     private var iCloudSyncEnabled: Bool = false
@@ -39,6 +44,7 @@ struct SettingsView: View {
             .formStyle(.grouped)
             // TEXT: navigation title at top of the Settings tab
             .navigationTitle("Settings")
+            .onAppear { refreshEventCount() }
             .sheet(isPresented: $showPicker) {
                 GeofencePickerSheet { name, coord, radius, colorHex, iconSymbol in
                     let fence = Geofence(
@@ -63,20 +69,49 @@ struct SettingsView: View {
         Section("Bulk actions") {
             // BUTTON: walk every event and reclassify its zone
             Button("Recompute zones for all events") {
-                let fences = (try? modelContext.fetch(FetchDescriptor<Geofence>())) ?? []
-                SettingsBulkActions.recomputeZones(events: allEvents, fences: fences)
+                SettingsBulkActions.recomputeZones(modelContext: modelContext)
             }
             // BUTTON: regroup events into trips
             Button("Regroup trips") {
-                SettingsBulkActions.regroupTrips(events: allEvents)
+                SettingsBulkActions.regroupTrips(events: fetchAllEvents())
             }
             // BUTTON: dedupe events + videos
             Button("Remove duplicate events and videos") {
-                SettingsBulkActions.removeDuplicates(events: allEvents, modelContext: modelContext)
+                SettingsBulkActions.removeDuplicates(events: fetchAllEvents(), modelContext: modelContext)
+                refreshEventCount()
             }
-            Text("\(allEvents.count) events in library")
+            // BUTTON: wipe the library (events + clip records; footage on
+            // disk is untouched). Geofences and watchlist entries are kept.
+            Button("Delete all events…", role: .destructive) {
+                confirmDeleteAll = true
+            }
+            .disabled(eventCount == 0)
+            .confirmationDialog(
+                "Delete all \(eventCount) events?",
+                isPresented: $confirmDeleteAll,
+                titleVisibility: .visible
+            ) {
+                Button("Delete all events", role: .destructive) {
+                    EventDeleter.deleteAll(modelContext: modelContext)
+                    refreshEventCount()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This removes every event and clip from the library. Your geofences, watchlist, and the video files on disk are kept. This can't be undone.")
+            }
+            Text("\(eventCount) events in library")
                 .font(.caption).foregroundStyle(.secondary)
         }
+    }
+
+    /// Bulk actions genuinely need every event — fetch on demand inside the
+    /// button action instead of holding the whole library in an @Query.
+    private func fetchAllEvents() -> [Event] {
+        (try? modelContext.fetch(FetchDescriptor<Event>())) ?? []
+    }
+
+    private func refreshEventCount() {
+        eventCount = (try? modelContext.fetchCount(FetchDescriptor<Event>())) ?? 0
     }
 
     // MARK: - AI summaries
@@ -86,7 +121,7 @@ struct SettingsView: View {
             // BUTTON: backfill summaries for every event without one
             Button {
                 SettingsBulkActions.summarizeAll(
-                    events: allEvents,
+                    events: fetchAllEvents(),
                     modelContext: modelContext,
                     runner: summaryRunner
                 )
@@ -105,7 +140,7 @@ struct SettingsView: View {
             }
 
             if !EventSummarizer.isAvailable {
-                Text("Apple Intelligence isn't available on this device. Summaries will fall back to a plain-text dump.")
+                Text("Apple Intelligence isn't available on this device, so AI summaries can't be generated. Events show a short built-in description instead.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

@@ -17,9 +17,11 @@ struct EventsMapView: View {
     @Query(sort: \Geofence.name) private var fences: [Geofence]
     @State private var selectedEvent: Event?
     @State private var showDensity: Bool = false
+    /// NAV: typed path so the marker popover can push EventDetailView.
+    @State private var path: [Event] = []
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             // UI: full-screen Map with markers (and optional density overlay).
             Map(selection: $selectedEvent) {
                 if showDensity {
@@ -30,11 +32,21 @@ struct EventsMapView: View {
             .mapStyle(.standard(elevation: .realistic))
             .overlay(alignment: .topLeading) {
                 if let event = selectedEvent {
-                    MapEventPopover(event: event) { selectedEvent = nil }
-                        .padding(12)
+                    MapEventPopover(
+                        event: event,
+                        onOpen: {
+                            selectedEvent = nil
+                            path.append(event)
+                        },
+                        onClose: { selectedEvent = nil }
+                    )
+                    .padding(12)
                 }
             }
             .navigationTitle("Map")
+            .navigationDestination(for: Event.self) { event in
+                EventDetailView(event: event)
+            }
             .toolbar {
                 ToolbarItem {
                     // BUTTON: density toggle
@@ -45,6 +57,12 @@ struct EventsMapView: View {
                 }
             }
         }
+        // NAV: trip-sibling and mini-map pin taps inside a map-pushed detail
+        // view use \.openEvent too — wire it to this tab's stack so they
+        // aren't silent no-ops here.
+        .environment(\.openEvent, OpenEventAction { event in
+            path.append(event)
+        })
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
@@ -58,6 +76,7 @@ struct EventsMapView: View {
 /// UI: small info card shown when a map marker is selected.
 private struct MapEventPopover: View {
     let event: Event
+    let onOpen: () -> Void
     let onClose: () -> Void
 
     var body: some View {
@@ -76,8 +95,8 @@ private struct MapEventPopover: View {
                 Text("Behavior: \(event.tag.capitalized)").font(.caption)
             }
             if event.interestingnessScore > 0 {
-                Text(String(format: "Score: %.0f", event.interestingnessScore * 100))
-                    .font(.caption.monospacedDigit())
+                Text(ScoreBadge.label(for: event.interestingnessScore))
+                    .font(.caption)
             }
             if !event.summary.isEmpty {
                 Text(event.summary)
@@ -85,6 +104,13 @@ private struct MapEventPopover: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(3)
             }
+            // BUTTON: jump from the marker to the full event page — without
+            // this the popover was a dead end.
+            Button(action: onOpen) {
+                Label("Open event", systemImage: "chevron.right.circle")
+            }
+            .buttonStyle(.borderless)
+            .padding(.top, 2)
         }
         .padding(12)
         .frame(maxWidth: 320, alignment: .leading)

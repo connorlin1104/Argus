@@ -43,7 +43,7 @@ final class AutoSummaryRunner {
                 if Task.isCancelled { break }
                 self.currentLabel = "Summarizing \(event.timestamp.formatted(date: .abbreviated, time: .shortened))"
                 // Build facts here on the main actor so the @Sendable closure
-                // below only captures a plain String — the @Model-backed
+                // below only captures a Sendable Facts value — the @Model-backed
                 // `event` never crosses the actor boundary. Matched clips'
                 // detection markers give the model a timeline to narrate.
                 let facts = EventSummarizer.makeFacts(
@@ -63,6 +63,15 @@ final class AutoSummaryRunner {
             }
             self.finish()
         }
+    }
+
+    /// Awaitable variant used by the post-import pipeline so each event's
+    /// summary is written right after its clips are scanned, before the next
+    /// event's scan begins. No-op (returns immediately) when nothing needs
+    /// summarizing or another batch is already running.
+    func runAndWait(events: [Event], modelContext: ModelContext) async {
+        run(events: events, modelContext: modelContext)
+        await task?.value
     }
 
     func cancel() {

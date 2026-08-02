@@ -18,15 +18,30 @@ struct EventSummarySection: View {
 
     @Environment(\.modelContext) private var modelContext
 
+    /// Observed so the card can say "scanning" while the post-import Vision
+    /// pass is still working through this event's clips. Computed so the
+    /// memberwise initializer stays non-private.
+    private var analyzer: VideoAnalyzer { .shared }
+
     var body: some View {
         // UI: AI summary card
         SectionCard(title: "AI Summary", symbol: "sparkles") {
             VStack(alignment: .leading, spacing: 10) {
                 if event.summary.isEmpty {
-                    // TEXT: empty-state copy
-                    Text("No summary yet.").foregroundStyle(.secondary)
+                    if analyzer.isAnalyzing {
+                        // TEXT: shown while the import's clip scan is running
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text("Scanning this event's clips — the summary appears when the scan reaches it.")
+                                .foregroundStyle(.secondary)
+                        }
+                    } else {
+                        // TEXT: empty-state copy
+                        Text("No summary yet.").foregroundStyle(.secondary)
+                    }
                 } else {
                     Text(event.summary)
+                        .textSelection(.enabled)
                 }
                 // BUTTON: generate / regenerate summary
                 Button {

@@ -13,6 +13,22 @@ import FoundationModels
 
 enum EventSummarizer {
 
+    /// Prompt-ready facts plus whether they contain any actual on-screen
+    /// activity for the model to narrate. Built on the main actor (the
+    /// @Model-backed event can't cross actors), then handed to the off-actor
+    /// `summarize(facts:)` as a plain Sendable value.
+    struct Facts: Sendable {
+        /// The facts block fed to the model.
+        let text: String
+        /// True when at least one detection or timeline line is present.
+        /// Camera / trigger / tag lines alone don't count — they give the
+        /// model nothing to narrate, and it invents activity to fill the gap.
+        let hasActivity: Bool
+        /// Humanized trigger reason ("" when the event has none), used for
+        /// the deterministic no-activity summary.
+        let trigger: String
+    }
+
     /// True when Apple Intelligence / FoundationModels is available on this device.
     static var isAvailable: Bool {
         #if canImport(FoundationModels)
@@ -36,29 +52,43 @@ enum EventSummarizer {
                           detection: DetectionSummary?,
                           videos: [VideoRecording] = []) async -> String {
         // Build facts on the main actor so the @Model-backed `event` never
-        // crosses an actor boundary — then hand the resulting Sendable string
+        // crosses an actor boundary — then hand the resulting Sendable value
         // to the off-actor model call below.
-        let factsBlock = buildFacts(event: event, detection: detection, videos: videos)
-        return await summarize(facts: factsBlock)
+        let facts = buildFacts(event: event, detection: detection, videos: videos)
+        return await summarize(facts: facts)
     }
 
     /// Off-actor entry point used after facts have already been built on the
-    /// main actor. Safe to call from `@Sendable` closures because `String` is
-    /// `Sendable` and the language-model call uses only the string + literals.
-    static func summarize(facts factsBlock: String) async -> String {
+    /// main actor. Safe to call from `@Sendable` closures because `Facts` is
+    /// `Sendable` and the language-model call uses only the facts + literals.
+    static func summarize(facts: Facts) async -> String {
+        // The on-device model fabricates people, distances, and actions when
+        // handed nothing but a trigger reason — the prompt rules below aren't
+        // enough to stop it. Events with no detection/timeline facts get a
+        // deterministic sentence instead of a model call.
+        guard facts.hasActivity else {
+            return noActivitySummary(trigger: facts.trigger)
+        }
+        let factsBlock = facts.text
         #if canImport(FoundationModels)
         if #available(macOS 26.0, iOS 26.0, *) {
             guard case .available = SystemLanguageModel.default.availability else {
-                return deterministicSummary(facts: factsBlock)
+                return deterministicSummary()
             }
             let instructions = """
             You narrate what happens in a Tesla Sentry Mode dashcam event for \
             the vehicle owner, using only the supplied facts.
 
             Rules:
-            - Describe the activity itself, like a brief play-by-play of the \
-              clip: who or what appeared, when, on which camera, how close they \
-              came, how long they stayed, and when they left.
+            - Tell the owner what happened in plain, everyday words, the way a \
+              neighbor would describe it: who or what showed up, roughly how \
+              close, roughly how long they stuck around.
+            - Summarize the overall activity. Do NOT list sightings one by one, \
+              recite the timeline entries back, or give exact clock offsets for \
+              each appearance — pick out only the moment that matters most.
+            - If the facts say what was seen with the person (a backpack, a \
+              box, a dog), work it into the description naturally: "a person \
+              carrying a box", "someone with a dog".
             - Do NOT mention the street address, city, zone, GPS coordinates, \
               or the date — that information is already shown next to the summary.
             - Use only facts listed. Do not invent actions, passengers, gestures, \
@@ -71,22 +101,23 @@ enum EventSummarizer {
               "roughly 2 meters away"). Round to whole numbers.
             - Name cameras as Front, Rear, Left, or Right. If the camera is missing, \
               say "one of the cameras".
-            - Plain prose, 2–3 sentences, no bullet lists, no markdown, no headings.
+            - Plain prose, at most 2 short sentences, no bullet lists, no \
+              markdown, no headings, no technical jargon.
             """
             let session = LanguageModelSession(instructions: instructions)
             do {
                 let prompt = "Here are the facts for this Sentry event. Write the summary now.\n\n\(factsBlock)"
                 let response = try await session.respond(to: prompt)
                 let text = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
-                return text.isEmpty ? deterministicSummary(facts: factsBlock) : text
+                return text.isEmpty ? deterministicSummary() : text
             } catch {
-                return deterministicSummary(facts: factsBlock)
+                return deterministicSummary()
             }
         } else {
-            return deterministicSummary(facts: factsBlock)
+            return deterministicSummary()
         }
         #else
-        return deterministicSummary(facts: factsBlock)
+        return deterministicSummary()
         #endif
     }
 
@@ -96,7 +127,7 @@ enum EventSummarizer {
     @MainActor
     static func makeFacts(event: Event,
                           detection: DetectionSummary?,
-                          videos: [VideoRecording] = []) -> String {
+                          videos: [VideoRecording] = []) -> Facts {
         buildFacts(event: event, detection: detection, videos: videos)
     }
 
@@ -106,7 +137,7 @@ enum EventSummarizer {
     @MainActor
     private static func buildFacts(event: Event,
                                    detection: DetectionSummary?,
-                                   videos: [VideoRecording]) -> String {
+                                   videos: [VideoRecording]) -> Facts {
         var lines: [String] = []
         let camName = TeslaCamera.displayName(for: event.camera)
         if !camName.isEmpty {
@@ -118,6 +149,9 @@ enum EventSummarizer {
         if event.tag != "unknown" {
             lines.append("- automatic behavior tag: \(event.tag)")
         }
+        // Everything up to here is metadata about the trigger, not on-screen
+        // activity; only lines added past this point make the facts narratable.
+        let metadataLineCount = lines.count
         if let d = detection {
             if d.humanCount > 0 {
                 lines.append("- person visible: yes")
@@ -142,12 +176,31 @@ enum EventSummarizer {
                 lines.append("- plate read: \(plate)")
             }
         }
+        // What the person had with them — a backpack, a box, a dog. Written
+        // by the clip scan; this is what turns "a person approached" into
+        // "a person carrying a box approached".
+        var contextPhrases: [String] = []
+        for video in videos {
+            let phrases = video.humanContext
+                .split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+            for phrase in phrases where !phrase.isEmpty && !contextPhrases.contains(phrase) {
+                contextPhrases.append(phrase)
+            }
+        }
+        if !contextPhrases.isEmpty {
+            lines.append("- seen with the person: \(contextPhrases.joined(separator: ", "))")
+        }
         let timeline = timelineFacts(videos: videos)
         if !timeline.isEmpty {
             lines.append("Activity timeline (times are minutes:seconds from the start of the clip):")
             lines.append(contentsOf: timeline)
         }
-        return lines.joined(separator: "\n")
+        return Facts(
+            text: lines.joined(separator: "\n"),
+            hasActivity: lines.count > metadataLineCount,
+            trigger: event.reason.isEmpty ? "" : humanizeReason(event.reason)
+        )
     }
 
     /// Reconstruct per-camera activity intervals from the detection markers
@@ -160,8 +213,8 @@ enum EventSummarizer {
         // this many seconds split one sighting into two separate intervals.
         let mergeGap = 4.0
         // TUNING: cap the prompt size — beyond this the extra lines add noise,
-        // not narrative.
-        let maxLines = 12
+        // not narrative, and tempt the model into reciting every sighting.
+        let maxLines = 8
 
         var lines: [String] = []
         for video in videos.sorted(by: { $0.camera < $1.camera }) {
@@ -253,10 +306,18 @@ enum EventSummarizer {
         }
     }
 
-    private static func deterministicSummary(facts: String) -> String {
+    private static func deterministicSummary() -> String {
         // Shown when the on-device model can't run (unsupported device, OS too
         // old, or the model failed). The raw facts are already visible in the
         // Details card, so we keep this short instead of dumping them again.
         return "This device doesn't support on-device AI summaries."
+    }
+
+    /// Deterministic copy for events with nothing to narrate. Worded to cover
+    /// both "clips not scanned yet" and "scanned, nothing found" — the caller
+    /// can't tell them apart, so the sentence must not claim either.
+    private static func noActivitySummary(trigger: String) -> String {
+        let tail = "No on-screen activity has been detected in this event's clips yet."
+        return trigger.isEmpty ? tail : "\(trigger). \(tail)"
     }
 }

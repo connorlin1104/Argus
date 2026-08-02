@@ -43,13 +43,18 @@ enum EventExporter {
         /// Source filenames that couldn't be read (unplugged drive, moved
         /// files) and are therefore missing from the zip.
         let skippedClips: [String]
+        /// Timestamps of events that had no matching clips in the library —
+        /// their zip folders hold only event.json. Distinct from
+        /// `skippedClips`: nothing failed, there was simply no footage to
+        /// stage for these events.
+        let eventsWithoutClips: [String]
     }
 
     /// Stages the export bundle and zips it. The result's zipURL points to
     /// the final zip — the caller is responsible for moving it to its final
     /// destination (typically via a save panel) and MUST surface
-    /// `skippedClips` to the user: a zip that silently lacks footage is the
-    /// worst failure mode for evidence exports.
+    /// `skippedClips` and `eventsWithoutClips` to the user: a zip that
+    /// silently lacks footage is the worst failure mode for evidence exports.
     ///
     /// - Parameter progress: invoked on the main actor after each event.
     static func export(events: [Event],
@@ -76,9 +81,15 @@ enum EventExporter {
         let total = Double(events.count)
         var stagedClips = 0
         var skippedClips: [String] = []
+        var eventsWithoutClips: [String] = []
 
         for (i, entry) in plan.enumerated() {
             let subfolder = folderName(for: entry.event)
+            if entry.videos.isEmpty {
+                eventsWithoutClips.append(
+                    entry.event.timestamp.formatted(date: .abbreviated, time: .shortened)
+                )
+            }
             for video in entry.videos {
                 do {
                     _ = try EventFileVendor.vend(video: video,
@@ -111,7 +122,10 @@ enum EventExporter {
         // don't linger in the temp dir.
         defer { try? FileManager.default.removeItem(at: staging) }
         let zipURL = try await zip(directory: staging)
-        return ExportResult(zipURL: zipURL, stagedClips: stagedClips, skippedClips: skippedClips)
+        return ExportResult(zipURL: zipURL,
+                            stagedClips: stagedClips,
+                            skippedClips: skippedClips,
+                            eventsWithoutClips: eventsWithoutClips)
     }
 
     /// Throw before staging if the temp volume can't hold the staged copies

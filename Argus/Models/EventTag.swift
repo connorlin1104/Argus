@@ -43,12 +43,16 @@ func classifyEventTag(_ s: DetectionSummary) -> EventTag {
     if s.humanPresenceSeconds >= 10 {
         return .lingered
     }
-    // TUNING: "approached" — within 3m and moving.
-    if let dist = s.closestHumanMeters, dist < 3.0, s.meanHumanMotion > 0.05 {
+    // TUNING: "approached" — within 3m and either moving or there for a few
+    // seconds. The presence clause matters: someone standing still 2.5m from
+    // the car for 5s used to fall through every rule and read "Unknown".
+    if let dist = s.closestHumanMeters, dist < 3.0,
+       s.meanHumanMotion > 0.05 || s.humanPresenceSeconds >= 3 {
         return .approached
     }
-    // TUNING: "passing" — quick walk-by (< 3s presence).
-    if s.humanCount > 0 && s.humanPresenceSeconds > 0 && s.humanPresenceSeconds < 3 {
+    // TUNING: "passing" — catch-all for any other human sighting, so a person
+    // on screen never classifies as Unknown.
+    if s.humanCount > 0 {
         return .passing
     }
     if s.humanCount == 0 && s.vehicleCount > 0 {

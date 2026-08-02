@@ -26,14 +26,24 @@ enum VideoAnalysisRunner {
         let vfovDegrees: Double
     }
 
+    /// - Parameter manageBatch: pass false when the caller drives the
+    ///   analyzer's batch lifecycle itself (the post-import scheduler runs
+    ///   several per-event slices under one batch so the progress chip
+    ///   doesn't restart per event). Ticks are emitted either way.
+    /// - Parameter maxConcurrent: how many clips run through Vision at once.
+    ///   Defaults to the thermally-safe bulk value; the post-import scheduler
+    ///   passes a higher value for the small per-event priority slices so the
+    ///   event the user is waiting on finishes sooner.
     @MainActor
     static func runAnalysis(
         videos: [VideoRecording],
         analyzer: VideoAnalyzer,
-        modelContext: ModelContext
+        modelContext: ModelContext,
+        manageBatch: Bool = true,
+        maxConcurrent: Int = maxConcurrentScans
     ) async {
-        analyzer.beginBatch(total: videos.count)
-        defer { analyzer.endBatch() }
+        if manageBatch { analyzer.beginBatch(total: videos.count) }
+        defer { if manageBatch { analyzer.endBatch() } }
 
         // Resolve bookmarks up front on the main actor; only Sendable data
         // (URL + FOV) crosses into the detection tasks.
@@ -51,11 +61,11 @@ enum VideoAnalysisRunner {
             ))
         }
 
-        // Sliding window: at most maxConcurrentScans clips are in Vision at
-        // any moment. Results are applied on the main actor as each clip
+        // Sliding window: at most maxConcurrent clips are in Vision at any
+        // moment. Results are applied on the main actor as each clip
         // finishes, so the model writes stay serialized while detection
         // overlaps across clips.
-        await withTaskGroup(of: (index: Int, detections: [Detection]).self) { group in
+        await withTaskGroup(of: (index: Int, scan: ClipScanResult).self) { group in
             var next = 0
             func addNextScan() {
                 guard next < items.count else { return }
@@ -64,20 +74,20 @@ enum VideoAnalysisRunner {
                 group.addTask {
                     let didAccess = item.url.startAccessingSecurityScopedResource()
                     defer { if didAccess { item.url.stopAccessingSecurityScopedResource() } }
-                    let detections = await DetectionEngine.runDetections(
+                    let scan = await DetectionEngine.runDetections(
                         url: item.url,
                         vfovDegrees: item.vfovDegrees
                     )
-                    return (item.index, detections)
+                    return (item.index, scan)
                 }
             }
-            for _ in 0..<maxConcurrentScans { addNextScan() }
+            for _ in 0..<max(1, maxConcurrent) { addNextScan() }
 
             while let result = await group.next() {
                 addNextScan()
                 let video = videos[result.index]
                 await apply(
-                    detections: result.detections,
+                    scan: result.scan,
                     to: video,
                     analyzer: analyzer,
                     modelContext: modelContext
@@ -92,11 +102,12 @@ enum VideoAnalysisRunner {
     /// human came within the proximity threshold.
     @MainActor
     private static func apply(
-        detections: [Detection],
+        scan: ClipScanResult,
         to video: VideoRecording,
         analyzer: VideoAnalyzer,
         modelContext: ModelContext
     ) async {
+        let detections = scan.detections
         let summary = VideoAnalyzer.summarize(detections: detections)
         let tag = classifyEventTag(summary)
         let (startTime, cameraName) = parseFilename(video.url.lastPathComponent)
@@ -106,6 +117,24 @@ enum VideoAnalysisRunner {
             DetectionMarker(kind: $0.kind.rawValue, timestampMs: $0.timestampMs)
         }
         video.setMarkers(markers)
+        // Carried items / companions seen alongside people — the summarizer
+        // reads this off the clip so it can say what the person had with them.
+        video.humanContext = scan.humanContext.joined(separator: ", ")
+
+        // Store plate reads on whichever event covers this clip, so watchlist
+        // matching works off OCR text instead of hoping the AI summary quotes
+        // it. Plates attach regardless of human proximity — a drive-by car
+        // never trips the proximity check.
+        let plateReads = detections.compactMap {
+            $0.kind == .licensePlate ? $0.licensePlateText : nil
+        }
+        if !plateReads.isEmpty, let startTime {
+            let wideWindow = startTime.addingTimeInterval(-incidentWindowSeconds)...video.endTime.addingTimeInterval(incidentWindowSeconds)
+            if let existing = existingEvent(inWindow: wideWindow, modelContext: modelContext) {
+                merge(plateReads: plateReads, into: existing)
+                do { try modelContext.save() } catch { print("save failed: \(error)") }
+            }
+        }
 
         if let proximityMs = analyzer.firstProximityEvent(in: detections),
            let startTime {
@@ -155,6 +184,7 @@ enum VideoAnalysisRunner {
                     summary: summary,
                     tag: tag
                 )
+                merge(plateReads: plateReads, into: event)
                 event.summary = await EventSummarizer.summarize(
                     event: event,
                     detection: summary,
@@ -171,6 +201,21 @@ enum VideoAnalysisRunner {
     /// ~10 minutes of clips per incident with the trigger timestamp near the
     /// end, so neighboring minutes of an imported event are the same incident.
     private static let incidentWindowSeconds: TimeInterval = 10 * 60
+
+    /// Append new plate reads to the event's stored plate text, deduped by
+    /// normalized form so re-scans don't accumulate the same plate twice.
+    @MainActor
+    private static func merge(plateReads: [String], into event: Event) {
+        var reads = event.plateText.split(separator: " ").map(String.init)
+        var seen = Set(reads.map { EventSearchMatcher.normalizePlate($0) })
+        for read in plateReads {
+            let normalized = EventSearchMatcher.normalizePlate(read)
+            guard !normalized.isEmpty, !seen.contains(normalized) else { continue }
+            seen.insert(normalized)
+            reads.append(read.replacingOccurrences(of: " ", with: ""))
+        }
+        event.plateText = reads.joined(separator: " ")
+    }
 
     /// Look up an existing Event whose timestamp falls inside the given window.
     /// Used to avoid creating scan-duplicates of imported Sentry events.

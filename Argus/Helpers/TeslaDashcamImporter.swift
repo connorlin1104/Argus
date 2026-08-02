@@ -112,17 +112,30 @@ func importEvent(eventURL: URL, eventDirectory: URL) async -> (event: Event, vid
 /// `.mp4` files they want associated with it.
 func importEvent(eventJSONURL: URL, videoFiles: [URL]) async -> (event: Event, videos: [VideoRecording])? {
     do {
+        // A real Tesla event.json is well under 1 KB. Refuse absurd files so
+        // a mislabeled or hostile "event.json" can't balloon memory — and
+        // trim each field below, since these strings flow straight into the
+        // UI and the (CloudKit-synced) store.
+        if let size = try? eventJSONURL.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+           size > 1_000_000 {
+            print("importEvent: skipping oversized event.json (\(size) bytes)")
+            return nil
+        }
         let data = try Data(contentsOf: eventJSONURL)
         guard let jsonDict = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any] else {
             return nil
         }
 
-        guard let camera = jsonDict["camera"] as? String,
-              let city = jsonDict["city"] as? String,
-              let estLatitude = jsonDict["est_lat"] as? String,
-              let estLongitude = jsonDict["est_lon"] as? String,
-              let reason = jsonDict["reason"] as? String,
-              let timestampString = jsonDict["timestamp"] as? String else {
+        func field(_ key: String) -> String? {
+            guard let raw = jsonDict[key] as? String else { return nil }
+            return String(raw.prefix(256))
+        }
+        guard let camera = field("camera"),
+              let city = field("city"),
+              let estLatitude = field("est_lat"),
+              let estLongitude = field("est_lon"),
+              let reason = field("reason"),
+              let timestampString = field("timestamp") else {
             return nil
         }
 
