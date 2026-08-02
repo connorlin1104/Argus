@@ -22,10 +22,10 @@ struct SettingsView: View {
 
     @State private var showPicker: Bool = false
     @State private var summaryRunner = AutoSummaryRunner()
-    /// Shown in the bulk-actions footer. A cached count instead of an
-    /// @Query over every Event — the query materialized the whole library
-    /// each time the Settings tab appeared.
+    /// Shown in the delete-all footer. Cached counts instead of @Querys —
+    /// a query materialized every Event each time the Settings tab appeared.
     @State private var eventCount: Int = 0
+    @State private var videoCount: Int = 0
     /// Confirmation gate for the destructive "Delete all events" action.
     @State private var confirmDeleteAll: Bool = false
 
@@ -52,7 +52,7 @@ struct SettingsView: View {
             .formStyle(.grouped)
             // TEXT: navigation title at top of the Settings tab
             .navigationTitle("Settings")
-            .onAppear { refreshEventCount() }
+            .onAppear { refreshCounts() }
             .sheet(isPresented: $showPicker) {
                 GeofencePickerSheet { name, coord, radius, colorHex, iconSymbol in
                     let fence = Geofence(
@@ -96,21 +96,21 @@ struct SettingsView: View {
             Button("Delete All Videos…", role: .destructive) {
                 confirmDeleteAll = true
             }
-            .disabled(eventCount == 0)
+            .disabled(eventCount == 0 && videoCount == 0)
             .confirmationDialog(
-                "Delete all videos and \(eventCount) events?",
+                "Delete all \(videoCount) videos and \(eventCount) events?",
                 isPresented: $confirmDeleteAll,
                 titleVisibility: .visible
             ) {
                 Button("Delete All Videos", role: .destructive) {
                     EventDeleter.deleteAll(modelContext: modelContext)
-                    refreshEventCount()
+                    refreshCounts()
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
                 Text("This removes every video and event from the app. Your geofences, watchlist, and the original video files on disk are kept. This can't be undone.")
             }
-            Text("\(eventCount) events")
+            Text("\(eventCount) events · \(videoCount) videos")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }
@@ -121,8 +121,9 @@ struct SettingsView: View {
         (try? modelContext.fetch(FetchDescriptor<Event>())) ?? []
     }
 
-    private func refreshEventCount() {
+    private func refreshCounts() {
         eventCount = (try? modelContext.fetchCount(FetchDescriptor<Event>())) ?? 0
+        videoCount = (try? modelContext.fetchCount(FetchDescriptor<VideoRecording>())) ?? 0
     }
 
     // MARK: - AI summaries
