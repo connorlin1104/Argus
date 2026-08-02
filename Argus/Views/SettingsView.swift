@@ -32,9 +32,13 @@ struct SettingsView: View {
     @AppStorage(ArgusApp.iCloudSyncDefaultsKey)
     private var iCloudSyncEnabled: Bool = false
 
+    @AppStorage(AppearanceSetting.defaultsKey)
+    private var appearance: AppearanceSetting = .system
+
     var body: some View {
         NavigationStack {
             Form {
+                appearanceSection
                 SettingsGeofenceSection(showPicker: $showPicker)
                 WatchlistSection()
                 librarySection
@@ -64,6 +68,19 @@ struct SettingsView: View {
                     SettingsBulkActions.recomputeZones(modelContext: modelContext)
                 }
             }
+        }
+    }
+
+    // MARK: - Appearance
+
+    private var appearanceSection: some View {
+        Section("Appearance") {
+            Picker("Theme", selection: $appearance) {
+                ForEach(AppearanceSetting.allCases, id: \.self) { setting in
+                    Text(setting.label).tag(setting)
+                }
+            }
+            .pickerStyle(.segmented)
         }
     }
 

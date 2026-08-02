@@ -8,9 +8,37 @@
 import SwiftUI
 import SwiftData
 
+/// User-selectable appearance, persisted via @AppStorage. `system` follows
+/// the device setting; the other two force a color scheme.
+enum AppearanceSetting: String, CaseIterable {
+    case system, light, dark
+
+    static let defaultsKey = "appearanceSetting"
+
+    /// nil means "follow the system" for .preferredColorScheme.
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .system: return nil
+        case .light:  return .light
+        case .dark:   return .dark
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .system: return "System"
+        case .light:  return "Light"
+        case .dark:   return "Dark"
+        }
+    }
+}
+
 @main
 struct ArgusApp: App {
     static let iCloudSyncDefaultsKey = "iCloudSyncEnabled"
+
+    @AppStorage(AppearanceSetting.defaultsKey)
+    private var appearance: AppearanceSetting = .system
 
     /// Whether the sync toggle was on when the container was built this
     /// launch. Container config is fixed at launch, so a mid-session toggle
@@ -80,6 +108,7 @@ struct ArgusApp: App {
     var body: some Scene {
         WindowGroup {
             MainView()
+                .preferredColorScheme(appearance.colorScheme)
         }
         .modelContainer(sharedModelContainer)
     }
