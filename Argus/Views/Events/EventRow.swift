@@ -109,9 +109,11 @@ struct EventRow: View {
         }
     }
 
-    /// Fourth line: zone + tag chips (when present) + optional watchlist badge.
+    /// Fourth line: zone + tag chips (when present) + optional watchlist
+    /// badge. Stacked so long zone names and tag labels don't truncate on
+    /// narrow screens.
     private var chipsLine: some View {
-        HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: 4) {
             if !event.zone.isEmpty {
                 ZoneChip(
                     zone: event.zone,

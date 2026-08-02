@@ -443,10 +443,11 @@ struct EventDetailView: View {
         }
     }
 
-    /// Compact row of zone/tag/score chips at the top of the info column.
+    /// Zone/tag/score chips at the top of the info column. Stacked
+    /// vertically — side by side the labels truncated on narrow screens.
     private var headerChips: some View {
-        // UI: header chip row
-        HStack(spacing: 6) {
+        // UI: header chip stack
+        VStack(alignment: .leading, spacing: 6) {
             if !event.zone.isEmpty {
                 ZoneChip(
                     zone: event.zone,
@@ -459,8 +460,8 @@ struct EventDetailView: View {
             if let match = WatchlistMatcher.match(event: event, in: watchlist) {
                 EventWatchlistBadge(entry: match)
             }
-            Spacer()
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Toolbar
