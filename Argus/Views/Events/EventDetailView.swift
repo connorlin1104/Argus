@@ -250,7 +250,10 @@ struct EventDetailView: View {
 
                 if hasHeader { headerChips }
                 cameraButtonsRows
-                EventSummarySection(event: event, isGenerating: $isGenerating)
+                // No Apple Intelligence → no AI Summary card at all.
+                if EventSummarizer.isAvailable {
+                    EventSummarySection(event: event, isGenerating: $isGenerating)
+                }
                 // LAYOUT: on compact, Details and the mini map each get full
                 // width — the map drops below Details instead of sitting to
                 // its right.
@@ -292,7 +295,10 @@ struct EventDetailView: View {
             // UI: editable event name at top, sized to match the timer
             EventNameSection(event: event)
             if hasHeader { headerChips }
-            EventSummarySection(event: event, isGenerating: $isGenerating)
+            // No Apple Intelligence → no AI Summary card at all.
+            if EventSummarizer.isAvailable {
+                EventSummarySection(event: event, isGenerating: $isGenerating)
+            }
             cameraButtonsRows
             // LAYOUT: Details + mini map share one row. Details flexes to
             // absorb whatever the column's width allows; the map column is a

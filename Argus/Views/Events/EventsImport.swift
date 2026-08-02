@@ -170,6 +170,11 @@ enum EventsImportRunner {
         if !freshlyInserted.isEmpty {
             let fences = (try? modelContext.fetch(FetchDescriptor<Geofence>())) ?? []
             SettingsBulkActions.recomputeZones(events: freshlyInserted, fences: fences)
+            // Re-cluster trips across the whole library, not just the new
+            // events — an import can extend or bridge existing trips. This is
+            // the only place tripID gets stamped.
+            let allEvents = (try? modelContext.fetch(FetchDescriptor<Event>())) ?? []
+            TripGrouper.regroup(events: allEvents)
         }
 
         do {

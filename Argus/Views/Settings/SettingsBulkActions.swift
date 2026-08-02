@@ -2,8 +2,9 @@
 //  SettingsBulkActions.swift
 //  Argus
 //
-//  Pure helpers behind the "Bulk actions" buttons in SettingsView. Kept
-//  in their own file so the settings view stays focused on layout.
+//  Library-wide maintenance helpers. Zone recompute and the AI summary
+//  backfill run automatically (on import / geofence changes) with the
+//  summary backfill also exposed as a button in SettingsView.
 //
 
 import Foundation
@@ -26,18 +27,11 @@ enum SettingsBulkActions {
 
     /// Convenience overload that fetches the current events + fences itself.
     /// Called automatically whenever the geofence list changes so zone labels
-    /// never go stale (the bulk-actions button remains as a manual fallback).
+    /// never go stale.
     static func recomputeZones(modelContext: ModelContext) {
         let events = (try? modelContext.fetch(FetchDescriptor<Event>())) ?? []
         let fences = (try? modelContext.fetch(FetchDescriptor<Geofence>())) ?? []
         recomputeZones(events: events, fences: fences)
-    }
-
-    // MARK: - Trip grouping
-
-    /// Re-cluster every event into trips based on time + location gaps.
-    static func regroupTrips(events: [Event]) {
-        TripGrouper.regroup(events: events)
     }
 
     // MARK: - AI summary backfill
@@ -50,39 +44,4 @@ enum SettingsBulkActions {
         runner.run(events: events, modelContext: modelContext)
     }
 
-    // MARK: - Dedupe
-
-    /// Remove duplicate events (by source|camera|timestamp-sec) and duplicate
-    /// videos (by URL path), keeping the earliest insertion of each.
-    static func removeDuplicates(events: [Event], modelContext: ModelContext) {
-        removeDuplicateEvents(events: events, modelContext: modelContext)
-        removeDuplicateVideos(modelContext: modelContext)
-        try? modelContext.save()
-    }
-
-    private static func removeDuplicateEvents(events: [Event], modelContext: ModelContext) {
-        var seen: Set<String> = []
-        for event in events.sorted(by: { $0.timestamp < $1.timestamp }) {
-            let key = "\(event.source)|\(event.camera)|\(Int(event.timestamp.timeIntervalSince1970))"
-            if seen.contains(key) {
-                modelContext.delete(event)
-            } else {
-                seen.insert(key)
-            }
-        }
-    }
-
-    private static func removeDuplicateVideos(modelContext: ModelContext) {
-        let videoDescriptor = FetchDescriptor<VideoRecording>()
-        let videos = (try? modelContext.fetch(videoDescriptor)) ?? []
-        var seen: Set<String> = []
-        for video in videos {
-            let key = video.url.path
-            if seen.contains(key) {
-                modelContext.delete(video)
-            } else {
-                seen.insert(key)
-            }
-        }
-    }
 }

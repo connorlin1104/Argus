@@ -37,8 +37,12 @@ struct SettingsView: View {
             Form {
                 SettingsGeofenceSection(showPicker: $showPicker)
                 WatchlistSection()
-                bulkActionsSection
-                aiSection
+                librarySection
+                // Devices without Apple Intelligence never see the AI section
+                // rather than seeing it disabled with an explanation.
+                if EventSummarizer.isAvailable {
+                    aiSection
+                }
                 iCloudSection
             }
             .formStyle(.grouped)
@@ -63,35 +67,25 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Bulk actions
+    // MARK: - Library
 
-    private var bulkActionsSection: some View {
-        Section("Bulk actions") {
-            // BUTTON: walk every event and reclassify its zone
-            Button("Recompute zones for all events") {
-                SettingsBulkActions.recomputeZones(modelContext: modelContext)
-            }
-            // BUTTON: regroup events into trips
-            Button("Regroup trips") {
-                SettingsBulkActions.regroupTrips(events: fetchAllEvents())
-            }
-            // BUTTON: dedupe events + videos
-            Button("Remove duplicate events and videos") {
-                SettingsBulkActions.removeDuplicates(events: fetchAllEvents(), modelContext: modelContext)
-                refreshEventCount()
-            }
+    // Zone recompute, trip regrouping, and dedupe all happen automatically on
+    // import (and on geofence changes), so the only manual action left is the
+    // full wipe — no section title needed for a single button.
+    private var librarySection: some View {
+        Section {
             // BUTTON: wipe the library (events + clip records; footage on
             // disk is untouched). Geofences and watchlist entries are kept.
-            Button("Delete all events…", role: .destructive) {
+            Button("Delete library…", role: .destructive) {
                 confirmDeleteAll = true
             }
             .disabled(eventCount == 0)
             .confirmationDialog(
-                "Delete all \(eventCount) events?",
+                "Delete the entire library (\(eventCount) events)?",
                 isPresented: $confirmDeleteAll,
                 titleVisibility: .visible
             ) {
-                Button("Delete all events", role: .destructive) {
+                Button("Delete library", role: .destructive) {
                     EventDeleter.deleteAll(modelContext: modelContext)
                     refreshEventCount()
                 }
@@ -128,7 +122,7 @@ struct SettingsView: View {
             } label: {
                 Label("Generate summaries for all events", systemImage: "sparkles")
             }
-            .disabled(!EventSummarizer.isAvailable || summaryRunner.isRunning)
+            .disabled(summaryRunner.isRunning)
 
             if summaryRunner.isRunning {
                 ProgressView(value: summaryRunner.progress) {
@@ -137,12 +131,6 @@ struct SettingsView: View {
                 }
                 Button("Cancel") { summaryRunner.cancel() }
                     .buttonStyle(.bordered)
-            }
-
-            if !EventSummarizer.isAvailable {
-                Text("Apple Intelligence isn't available on this device, so AI summaries can't be generated. Events show a short built-in description instead.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
         }
     }
