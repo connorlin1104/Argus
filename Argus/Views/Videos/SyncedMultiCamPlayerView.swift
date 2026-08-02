@@ -54,6 +54,12 @@ struct SyncedMultiCamPlayerView: View {
     /// Tesla footage size differs by hardware generation (HW3 is 4:3, HW4 is
     /// ~3:2), so tiles read from here instead of assuming one ratio.
     @State var aspectRatios: [String: CGFloat] = [:]
+    /// Detection markers of the clip actually loaded per camera. The scrubber
+    /// reads these instead of `videos` directly — when an event's timestamp
+    /// sits on the seam between two clips, `videos` can contain both minutes
+    /// per camera, and drawing all of them overlaid two clips' worth of ticks
+    /// on one timeline.
+    @State var markersByCamera: [String: [DetectionMarker]] = [:]
 
     /// LAYOUT: Canonical camera display order. Only cameras present in `videos` show up.
     let preferredCameraOrder: [String] = ["front", "left_repeater", "right_repeater", "back"]

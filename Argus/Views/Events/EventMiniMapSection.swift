@@ -57,12 +57,11 @@ struct EventMiniMapSection: View {
     private var content: some View {
         if let center = currentCoord {
             mapBody(center: center)
-        } else if let firstFav = favoriteClusters.first {
-            // No coords on this event — fall back to centering on a favorite
-            // so the user still sees their reference points.
-            mapBody(center: firstFav.coord)
         } else {
-            // No coords anywhere — explain why the map is empty.
+            // No coords on this event — show the placeholder rather than a
+            // map. Centering on a favorite (the old fallback) read as "this
+            // event happened here", which was misleading for scan-created
+            // events that have no GPS at all.
             let placeholder = VStack(spacing: 8) {
                 Image(systemName: "mappin.slash")
                     .font(.title2)

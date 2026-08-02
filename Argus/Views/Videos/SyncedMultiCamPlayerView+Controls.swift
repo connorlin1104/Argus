@@ -158,12 +158,17 @@ extension SyncedMultiCamPlayerView {
         let eventSeconds: Double
     }
 
-    /// All detection markers across all camera tracks, mapped to global timeline seconds.
+    /// All detection markers across the loaded camera tracks, mapped to global
+    /// timeline seconds. Reads `markersByCamera` (captured in setupPlayers for
+    /// the one clip chosen per camera) rather than `videos`, which can hold two
+    /// adjacent clips per camera when the event timestamp sits on a clip seam —
+    /// drawing those overlaid a second minute of ticks on the timeline. Keys
+    /// are canonical camera IDs, matching `offsets`.
     var allMarkers: [EventMarker] {
         var out: [EventMarker] = []
-        for video in videos {
-            let offset = offsets[video.camera] ?? video.startTime.timeIntervalSince(anchor)
-            for m in video.markers {
+        for (cam, markers) in markersByCamera {
+            let offset = offsets[cam] ?? 0
+            for m in markers {
                 out.append(EventMarker(
                     kind: m.kind,
                     eventSeconds: offset + Double(m.timestampMs) / 1000.0

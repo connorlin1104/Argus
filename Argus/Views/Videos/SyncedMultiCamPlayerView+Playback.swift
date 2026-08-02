@@ -31,6 +31,7 @@ extension SyncedMultiCamPlayerView {
         var newURLs: [String: URL] = [:]
         var newOffsets: [String: Double] = [:]
         var newDurations: [String: Double] = [:]
+        var newMarkers: [String: [DetectionMarker]] = [:]
         var maxEnd: Double = 0
 
         for video in videos {
@@ -54,6 +55,7 @@ extension SyncedMultiCamPlayerView {
             newOffsets[camKey] = offset
             let duration = video.endTime.timeIntervalSince(video.startTime)
             newDurations[camKey] = duration
+            newMarkers[camKey] = video.markers
             maxEnd = max(maxEnd, offset + duration)
         }
 
@@ -61,6 +63,7 @@ extension SyncedMultiCamPlayerView {
         resolvedURLs = newURLs
         offsets = newOffsets
         durations = newDurations
+        markersByCamera = newMarkers
         totalDuration = maxEnd
         positionSeconds = 0
 
@@ -123,6 +126,7 @@ extension SyncedMultiCamPlayerView {
         offsets.removeAll()
         durations.removeAll()
         aspectRatios.removeAll()
+        markersByCamera.removeAll()
         isPlaying = false
     }
 

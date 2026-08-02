@@ -107,7 +107,7 @@ enum VideoAnalysisRunner {
         }
         video.setMarkers(markers)
 
-        if analyzer.firstProximityEvent(in: detections) != nil,
+        if let proximityMs = analyzer.firstProximityEvent(in: detections),
            let startTime {
             // Dedupe: if an existing event's timestamp falls within this
             // video's recording window, enrich it instead of inserting a
@@ -130,10 +130,28 @@ enum VideoAnalysisRunner {
                         videos: [video]
                     )
                 }
+            } else if existingEvent(
+                inWindow: startTime.addingTimeInterval(-incidentWindowSeconds)...video.endTime.addingTimeInterval(incidentWindowSeconds),
+                modelContext: modelContext
+            ) != nil {
+                // Same incident, different minute: Sentry saves ~10 minutes of
+                // clips per event, so a clip whose own window doesn't contain
+                // the trigger timestamp is still the same footage. Creating an
+                // event here duplicated real Sentry events minute-by-minute.
             } else {
+                // Timestamp the event at the proximity moment itself, clamped
+                // slightly inside the clip. Using the clip's raw start time put
+                // the event exactly on the seam shared with the previous clip,
+                // and the detail view's clip-matching query then pulled in two
+                // minutes of footage for every camera.
+                let clipSeconds = video.endTime.timeIntervalSince(startTime)
+                let insetSeconds = min(
+                    max(0.5, Double(proximityMs) / 1000.0),
+                    max(0.5, clipSeconds - 0.5)
+                )
                 let event = buildEvent(
                     cameraName: cameraName,
-                    startTime: startTime,
+                    startTime: startTime.addingTimeInterval(insetSeconds),
                     summary: summary,
                     tag: tag
                 )
@@ -147,6 +165,12 @@ enum VideoAnalysisRunner {
             do { try modelContext.save() } catch { print("save failed: \(error)") }
         }
     }
+
+    /// TUNING: how far (seconds) around a clip's window an existing event's
+    /// timestamp suppresses creating a new scan event. Sentry records up to
+    /// ~10 minutes of clips per incident with the trigger timestamp near the
+    /// end, so neighboring minutes of an imported event are the same incident.
+    private static let incidentWindowSeconds: TimeInterval = 10 * 60
 
     /// Look up an existing Event whose timestamp falls inside the given window.
     /// Used to avoid creating scan-duplicates of imported Sentry events.

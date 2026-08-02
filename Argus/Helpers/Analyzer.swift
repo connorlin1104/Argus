@@ -82,12 +82,27 @@ class VideoAnalyzer {
         )
     }
 
+    /// Longest continuous stretch a human stayed on screen. First-to-last
+    /// sighting overcounted badly — two brief walk-bys 50 seconds apart read
+    /// as 50 seconds of presence and got tagged "Lingered".
     private nonisolated static func computePresenceSeconds(humans: [Detection]) -> Double {
-        if let first = humans.first?.timestampMs, let last = humans.last?.timestampMs, last > first {
-            return Double(last - first) / 1000.0
+        guard let first = humans.first else { return 0 }
+        // TUNING: detections are sampled several times per second; gaps longer
+        // than this many ms split one sighting into two separate runs.
+        let maxGapMs = 3000
+        var longestMs = 0
+        var runStartMs = first.timestampMs
+        var previousMs = first.timestampMs
+        for d in humans.dropFirst() {
+            if d.timestampMs - previousMs > maxGapMs {
+                longestMs = max(longestMs, previousMs - runStartMs)
+                runStartMs = d.timestampMs
+            }
+            previousMs = d.timestampMs
         }
+        longestMs = max(longestMs, previousMs - runStartMs)
         // single-frame blip → tiny presence so it's not zero
-        return humans.isEmpty ? 0 : 0.2
+        return longestMs > 0 ? Double(longestMs) / 1000.0 : 0.2
     }
 
     private nonisolated static func computeMeanMotion(humans: [Detection]) -> Double {
