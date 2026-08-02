@@ -28,7 +28,9 @@ final class AutoSummaryRunner {
     /// 25 s timeout so a stalled model can't hang the whole batch.
     func run(events: [Event], modelContext: ModelContext) {
         guard !isRunning else { return }
-        let candidates = events.filter { $0.summary.isEmpty }
+        // Placeholders count as unsummarized so a backfill can upgrade
+        // "no activity detected yet" text once clips have real markers.
+        let candidates = events.filter { EventSummarizer.isPlaceholderSummary($0.summary) }
         guard !candidates.isEmpty, EventSummarizer.isAvailable else { return }
 
         isRunning = true

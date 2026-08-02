@@ -23,6 +23,13 @@ struct ClipScanResult: Sendable {
 
 enum DetectionEngine {
 
+    /// Longest frame edge the decoder outputs for Vision. HW3 clips
+    /// (1280×960) pass through untouched; HW4 front clips (2896×1876) decode
+    /// at half size. Human rects use normalized bboxes so distance estimates
+    /// are unaffected; plates that only resolve above this size were already
+    /// unreadable in the sampled frames.
+    private static let maxDecodeDimension: CGFloat = 1920
+
     /// Walks a video, runs Vision requests every 5th frame, and returns
     /// every detection it finds (humans, vehicles, license plates) plus
     /// the carried-object / companion context seen alongside people.
@@ -34,10 +41,21 @@ enum DetectionEngine {
         guard let reader = try? AVAssetReader(asset: asset) else {
             return ClipScanResult(detections: [], humanContext: [])
         }
-        let output = AVAssetReaderTrackOutput(
-            track: track,
-            outputSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
-        )
+        // Decode capped at maxDecodeDimension — full-size 32BGRA frames from
+        // HW4 cameras are ~21 MB each and were a big slice of the scan's
+        // memory footprint on iPhones.
+        var outputSettings: [String: Any] = [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+        ]
+        if let naturalSize = try? await track.load(.naturalSize) {
+            let longSide = max(naturalSize.width, naturalSize.height)
+            if longSide > maxDecodeDimension {
+                let scale = maxDecodeDimension / longSide
+                outputSettings[kCVPixelBufferWidthKey as String] = Int(naturalSize.width * scale)
+                outputSettings[kCVPixelBufferHeightKey as String] = Int(naturalSize.height * scale)
+            }
+        }
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: outputSettings)
         reader.add(output)
         reader.startReading()
 
@@ -51,30 +69,40 @@ enum DetectionEngine {
             "pickup", "motorcycle", "bus", "minivan", "sedan", "convertible"
         ]
 
-        while let sample = output.copyNextSampleBuffer() {
-            // TUNING: change "% 5" to scan more or fewer frames.
-            if frameCount % 5 == 0, let pixelBuffer = CMSampleBufferGetImageBuffer(sample) {
-                let pts = CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sample))
-                let timestampMs = Int(pts * 1000)
+        // Each iteration runs inside its own autoreleasepool. Sample buffers
+        // and Vision's per-frame intermediates are autoreleased, and this
+        // loop has no await for the runtime to drain at — without the pool
+        // they piled up for the whole clip (gigabytes), which iOS answered
+        // by killing the app a few clips into a batch scan.
+        while true {
+            let finished = autoreleasepool { () -> Bool in
+                guard let sample = output.copyNextSampleBuffer() else { return true }
+                // TUNING: change "% 5" to scan more or fewer frames.
+                if frameCount % 5 == 0, let pixelBuffer = CMSampleBufferGetImageBuffer(sample) {
+                    let pts = CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sample))
+                    let timestampMs = Int(pts * 1000)
 
-                let frame = analyzeFrame(
-                    pixelBuffer: pixelBuffer,
-                    timestampMs: timestampMs,
-                    vfovDegrees: vfovDegrees,
-                    vehicleLabels: vehicleLabels,
-                    // TUNING: accurate text recognition dominates scan time,
-                    // and a readable plate stays on screen for seconds — OCR
-                    // every 3rd sampled frame (~every 15th frame) instead of
-                    // all of them. Roughly halves per-clip scan time.
-                    includeText: sampledCount % 3 == 0
-                )
-                detections.append(contentsOf: frame.detections)
-                for phrase in frame.contextPhrases {
-                    contextCounts[phrase, default: 0] += 1
+                    let frame = analyzeFrame(
+                        pixelBuffer: pixelBuffer,
+                        timestampMs: timestampMs,
+                        vfovDegrees: vfovDegrees,
+                        vehicleLabels: vehicleLabels,
+                        // TUNING: accurate text recognition dominates scan time,
+                        // and a readable plate stays on screen for seconds — OCR
+                        // every 3rd sampled frame (~every 15th frame) instead of
+                        // all of them. Roughly halves per-clip scan time.
+                        includeText: sampledCount % 3 == 0
+                    )
+                    detections.append(contentsOf: frame.detections)
+                    for phrase in frame.contextPhrases {
+                        contextCounts[phrase, default: 0] += 1
+                    }
+                    sampledCount += 1
                 }
-                sampledCount += 1
+                frameCount += 1
+                return false
             }
-            frameCount += 1
+            if finished { break }
         }
 
         // Noise gate: a phrase must show up in at least 2 sampled frames.

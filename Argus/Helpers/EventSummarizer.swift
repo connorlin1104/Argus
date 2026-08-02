@@ -306,18 +306,27 @@ enum EventSummarizer {
         }
     }
 
+    private static let unsupportedDeviceText = "This device doesn't support on-device AI summaries."
+    private static let noActivityTail = "No on-screen activity has been detected in this event's clips yet."
+
     private static func deterministicSummary() -> String {
         // Shown when the on-device model can't run (unsupported device, OS too
         // old, or the model failed). The raw facts are already visible in the
         // Details card, so we keep this short instead of dumping them again.
-        return "This device doesn't support on-device AI summaries."
+        return unsupportedDeviceText
     }
 
     /// Deterministic copy for events with nothing to narrate. Worded to cover
     /// both "clips not scanned yet" and "scanned, nothing found" — the caller
     /// can't tell them apart, so the sentence must not claim either.
     private static func noActivitySummary(trigger: String) -> String {
-        let tail = "No on-screen activity has been detected in this event's clips yet."
-        return trigger.isEmpty ? tail : "\(trigger). \(tail)"
+        trigger.isEmpty ? noActivityTail : "\(trigger). \(noActivityTail)"
+    }
+
+    /// True for summaries that carry no narrated activity — empty, the
+    /// no-activity placeholder, or the unsupported-device notice — so a later
+    /// scan that finds real detections knows it may overwrite them.
+    static func isPlaceholderSummary(_ text: String) -> Bool {
+        text.isEmpty || text == unsupportedDeviceText || text.hasSuffix(noActivityTail)
     }
 }

@@ -152,7 +152,13 @@ enum VideoAnalysisRunner {
                 if existing.tag == "unknown" {
                     existing.tag = tag.rawValue
                 }
-                if existing.summary.isEmpty {
+                // Placeholder (not just empty): an earlier pass with no
+                // markers writes "no activity detected yet", and this scan
+                // may be the one that found the activity. Skipped entirely
+                // without Apple Intelligence — the model call would just
+                // stamp an unsupported-device notice over the placeholder.
+                if EventSummarizer.isAvailable,
+                   EventSummarizer.isPlaceholderSummary(existing.summary) {
                     existing.summary = await EventSummarizer.summarize(
                         event: existing,
                         detection: summary,
@@ -185,11 +191,13 @@ enum VideoAnalysisRunner {
                     tag: tag
                 )
                 merge(plateReads: plateReads, into: event)
-                event.summary = await EventSummarizer.summarize(
-                    event: event,
-                    detection: summary,
-                    videos: [video]
-                )
+                if EventSummarizer.isAvailable {
+                    event.summary = await EventSummarizer.summarize(
+                        event: event,
+                        detection: summary,
+                        videos: [video]
+                    )
+                }
                 modelContext.insert(event)
             }
             do { try modelContext.save() } catch { print("save failed: \(error)") }

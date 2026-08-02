@@ -24,6 +24,13 @@ final class ImportFollowUpScheduler {
     /// a single import doesn't feel unresponsive.
     private let settleSeconds: Double = 5
 
+    /// TUNING: concurrent clip scans for the per-event priority slices.
+    #if os(iOS)
+    private let priorityConcurrency = 2
+    #else
+    private let priorityConcurrency = 4
+    #endif
+
     private var activeImports = 0
     private var pendingEvents: [Event] = []
     private var pendingVideos: [VideoRecording] = []
@@ -106,8 +113,10 @@ final class ImportFollowUpScheduler {
                     modelContext: modelContext,
                     manageBatch: false,
                     // A chunk is one event's camera angles (~4 clips) and the
-                    // user is actively waiting on it — scan them all at once.
-                    maxConcurrent: 4
+                    // user is actively waiting on it. On the Mac, scan them
+                    // all at once; iPhones can't afford 4 concurrent decode
+                    // pipelines while the user may also be playing clips.
+                    maxConcurrent: priorityConcurrency
                 )
             }
             if EventSummarizer.isAvailable {
