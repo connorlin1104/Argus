@@ -169,6 +169,10 @@ extension SyncedMultiCamPlayerView {
         for (cam, markers) in markersByCamera {
             let offset = offsets[cam] ?? 0
             for m in markers {
+                // Vehicle detections are whole-frame classifications — a
+                // dashcam sees a car in nearly every frame, so drawing them
+                // floods the bar purple and drowns the real activity ticks.
+                if m.kind == "vehicle" { continue }
                 out.append(EventMarker(
                     kind: m.kind,
                     eventSeconds: offset + Double(m.timestampMs) / 1000.0
