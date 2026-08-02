@@ -258,7 +258,7 @@ private struct EventsListRoot: View {
             }
             Button("Cancel", role: .cancel) { pendingDeletion = [] }
         } message: {
-            Text("This removes the event\(pendingDeletion.count == 1 ? "" : "s") and \(pendingDeletion.count == 1 ? "its" : "their") clips from the library. The video files stay untouched on disk.")
+            Text("This removes the event\(pendingDeletion.count == 1 ? "" : "s") and \(pendingDeletion.count == 1 ? "its" : "their") videos from the app. The original video files stay untouched on disk.")
         }
     }
 
@@ -555,7 +555,7 @@ private struct EventsListRoot: View {
                 var warnings: [String] = []
                 if !result.eventsWithoutClips.isEmpty {
                     let n = result.eventsWithoutClips.count
-                    warnings.append("\(n) event\(n == 1 ? " has" : "s have") no matching clips in the library, so \(n == 1 ? "its folder" : "their folders") in the zip contain\(n == 1 ? "s" : "") only metadata: \(result.eventsWithoutClips.joined(separator: "; "))")
+                    warnings.append("\(n) event\(n == 1 ? " has" : "s have") no matching videos, so \(n == 1 ? "its folder" : "their folders") in the zip contain\(n == 1 ? "s" : "") only metadata: \(result.eventsWithoutClips.joined(separator: "; "))")
                 }
                 if !result.skippedClips.isEmpty {
                     let n = result.skippedClips.count

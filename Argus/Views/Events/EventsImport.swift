@@ -54,11 +54,11 @@ final class ImportFeedback {
         if tally.insertedEvents == 0 && tally.skippedEvents == 0 {
             message = "No Tesla events found in that folder. Pick a TeslaCam, SavedClips, or SentryClips folder — each event folder needs its event.json."
         } else if tally.insertedEvents == 0 {
-            message = "Nothing new to import — \(count(tally.skippedEvents, "event")) in that folder \(tally.skippedEvents == 1 ? "is" : "are") already in the library."
+            message = "Nothing new to import — \(count(tally.skippedEvents, "event")) in that folder \(tally.skippedEvents == 1 ? "is" : "are") already imported."
         } else {
             var text = "Imported \(count(tally.insertedEvents, "event")) with \(count(tally.insertedVideos, "clip"))."
             if tally.skippedEvents > 0 {
-                text += " Skipped \(count(tally.skippedEvents, "event")) already in the library."
+                text += " Skipped \(count(tally.skippedEvents, "event")) already imported."
             }
             message = text
         }

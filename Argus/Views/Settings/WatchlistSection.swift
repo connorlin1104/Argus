@@ -18,7 +18,7 @@ struct WatchlistSection: View {
     var body: some View {
         Section("Watchlist plates") {
             if entries.isEmpty {
-                Text("Add a plate to flag matching events across your library.")
+                Text("Add a plate to flag matching events across your videos.")
                     .foregroundStyle(.secondary)
             }
             ForEach(entries) { entry in

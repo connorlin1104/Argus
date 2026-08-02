@@ -91,26 +91,26 @@ struct SettingsView: View {
     // full wipe — no section title needed for a single button.
     private var librarySection: some View {
         Section {
-            // BUTTON: wipe the library (events + clip records; footage on
+            // BUTTON: wipe everything (events + video records; footage on
             // disk is untouched). Geofences and watchlist entries are kept.
-            Button("Delete library…", role: .destructive) {
+            Button("Delete All Videos…", role: .destructive) {
                 confirmDeleteAll = true
             }
             .disabled(eventCount == 0)
             .confirmationDialog(
-                "Delete the entire library (\(eventCount) events)?",
+                "Delete all videos and \(eventCount) events?",
                 isPresented: $confirmDeleteAll,
                 titleVisibility: .visible
             ) {
-                Button("Delete library", role: .destructive) {
+                Button("Delete All Videos", role: .destructive) {
                     EventDeleter.deleteAll(modelContext: modelContext)
                     refreshEventCount()
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("This removes every event and clip from the library. Your geofences, watchlist, and the video files on disk are kept. This can't be undone.")
+                Text("This removes every video and event from the app. Your geofences, watchlist, and the original video files on disk are kept. This can't be undone.")
             }
-            Text("\(eventCount) events in library")
+            Text("\(eventCount) events")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }
