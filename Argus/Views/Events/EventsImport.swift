@@ -10,6 +10,18 @@ import Foundation
 import SwiftData
 import Observation
 
+/// Which system picker the shared import `.fileImporter` in EventsListView
+/// presents. Both modes share a single fileImporter because SwiftUI only
+/// honors one fileImporter per view — a second modifier attached to the same
+/// view silently never presents (this is what broke folder import on iOS).
+enum ImportPickerMode {
+    /// Standard path: pick a TeslaCam / SavedClips / SentryClips folder.
+    case folder
+    /// Multi-file fallback for iOS storage providers whose folder picker
+    /// won't surface an "Open" affordance.
+    case files
+}
+
 /// Result of one import pass: counts shown in the import log.
 struct ImportTally {
     var insertedEvents = 0
@@ -58,6 +70,20 @@ final class ImportFeedback {
 }
 
 enum EventsImportRunner {
+
+    /// Entry point for the shared fileImporter in EventsListView. The picker
+    /// always yields a URL list; in folder mode it carries exactly one URL.
+    static func handlePicked(result: Result<[URL], Error>, mode: ImportPickerMode, modelContext: ModelContext) {
+        switch (mode, result) {
+        case (.folder, .success(let urls)):
+            guard let url = urls.first else { return }
+            handle(result: .success(url), modelContext: modelContext)
+        case (.folder, .failure(let error)):
+            handle(result: .failure(error), modelContext: modelContext)
+        case (.files, _):
+            handleFiles(result: result, modelContext: modelContext)
+        }
+    }
 
     /// Top-level handler bound to the folder importer in EventsListView.
     static func handle(result: Result<URL, Error>, modelContext: ModelContext) {

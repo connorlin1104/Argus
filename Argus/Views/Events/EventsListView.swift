@@ -56,13 +56,14 @@ private struct EventsListRoot: View {
 
     // === Extracted state ===
     @State private var selection = EventsListSelection()
-    /// Folder picker, both platforms. On iOS a few USB / SD storage providers
-    /// don't surface an "Open" affordance in the system folder picker, so the
-    /// multi-file picker below stays available as a fallback.
-    @State private var showImportView: Bool = false
-    #if os(iOS)
-    @State private var showImportFilesView: Bool = false
-    #endif
+    /// Import picker, both platforms. On iOS a few USB / SD storage providers
+    /// don't surface an "Open" affordance in the system folder picker, so a
+    /// multi-file mode stays available as a fallback. Mode is stored separately
+    /// from the presented flag (rather than as one optional) so the completion
+    /// handler still knows the mode even if SwiftUI resets the presentation
+    /// binding first.
+    @State private var importPickerMode: ImportPickerMode = .folder
+    @State private var showImportPicker: Bool = false
 
     // === Export state ===
     @State private var exportInProgress: Bool = false
@@ -202,18 +203,21 @@ private struct EventsListRoot: View {
                 // between empty and populated states.
                 .searchable(text: $filterState.searchText, prompt: "Search city, plate, summary, name…")
                 .toolbar { toolbarContent }
-                .fileImporter(isPresented: $showImportView, allowedContentTypes: [.folder]) { result in
-                    EventsImportRunner.handle(result: result, modelContext: modelContext)
-                }
-                #if os(iOS)
+                // Single fileImporter for both import modes: SwiftUI ignores a
+                // second fileImporter attached to the same view (its binding
+                // flips but no panel appears), which is what broke the iOS
+                // folder picker when folder and files each had their own.
                 .fileImporter(
-                    isPresented: $showImportFilesView,
-                    allowedContentTypes: [.movie, .json],
-                    allowsMultipleSelection: true
+                    isPresented: $showImportPicker,
+                    allowedContentTypes: importPickerMode == .files ? [.movie, .json] : [.folder],
+                    allowsMultipleSelection: importPickerMode == .files
                 ) { result in
-                    EventsImportRunner.handleFiles(result: result, modelContext: modelContext)
+                    EventsImportRunner.handlePicked(
+                        result: result,
+                        mode: importPickerMode,
+                        modelContext: modelContext
+                    )
                 }
-                #endif
         }
         .environment(\.openEvent, OpenEventAction { event in
             path.append(event)
@@ -345,7 +349,7 @@ private struct EventsListRoot: View {
             #if os(iOS)
             // BUTTON: empty-state import (iOS) — opens the folder picker.
             Button {
-                showImportView = true
+                presentImportPicker(.folder)
             } label: {
                 Label("Import Sentry folder", systemImage: "square.and.arrow.down")
                     .font(.title3.weight(.semibold))
@@ -363,12 +367,12 @@ private struct EventsListRoot: View {
             // BUTTON: empty-state file fallback (iOS) — for storage providers
             // whose folder picker won't show an "Open" affordance.
             Button("Can't open the folder? Select files instead…") {
-                showImportFilesView = true
+                presentImportPicker(.files)
             }
             .font(.footnote)
             #else
             Button {
-                showImportView = true
+                presentImportPicker(.folder)
             } label: {
                 Label("Import Sentry folder", systemImage: "square.and.arrow.down")
                     .font(.title3.weight(.semibold))
@@ -485,11 +489,16 @@ private struct EventsListRoot: View {
                 sortMode: $filterState.sortMode
             )
         }
-        #if os(iOS)
-        EventsImportToolbar(showImportView: $showImportView, showImportFilesView: $showImportFilesView)
-        #else
-        EventsImportToolbar(showImportView: $showImportView)
-        #endif
+        EventsImportToolbar { presentImportPicker($0) }
+    }
+
+    // MARK: - Import picker
+
+    /// Sets the picker mode before presenting so the shared fileImporter shows
+    /// the right panel (folder vs multi-file) for whichever button was tapped.
+    private func presentImportPicker(_ mode: ImportPickerMode) {
+        importPickerMode = mode
+        showImportPicker = true
     }
 
     // MARK: - Rename

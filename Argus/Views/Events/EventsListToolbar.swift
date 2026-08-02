@@ -98,10 +98,8 @@ struct EventsFilterMenu: ToolbarContent {
 /// providers don't surface an "Open" affordance in the folder picker, so the
 /// menu keeps a multi-file fallback ("Select All" works on every provider).
 struct EventsImportToolbar: ToolbarContent {
-    @Binding var showImportView: Bool
-    #if os(iOS)
-    @Binding var showImportFilesView: Bool
-    #endif
+    /// Presents the shared import fileImporter in the given mode.
+    let present: (ImportPickerMode) -> Void
 
     var body: some ToolbarContent {
         // BUTTON: import (top-right cloud-arrow icon)
@@ -109,12 +107,12 @@ struct EventsImportToolbar: ToolbarContent {
             #if os(iOS)
             Menu {
                 Button {
-                    showImportView = true
+                    present(.folder)
                 } label: {
                     Label("Import Folder…", systemImage: "folder")
                 }
                 Button {
-                    showImportFilesView = true
+                    present(.files)
                 } label: {
                     Label("Select Files…", systemImage: "doc.on.doc")
                 }
@@ -123,7 +121,7 @@ struct EventsImportToolbar: ToolbarContent {
             }
             #else
             Button {
-                showImportView = true
+                present(.folder)
             } label: {
                 Label("Import", systemImage: "square.and.arrow.down")
             }
