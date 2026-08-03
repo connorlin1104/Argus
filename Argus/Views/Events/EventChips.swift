@@ -8,6 +8,67 @@
 
 import SwiftUI
 
+// MARK: - Chip flow layout
+
+/// Lays chips out side by side, wrapping onto a new line whenever the next
+/// chip wouldn't fit — labels never truncate. Rows are leading-aligned.
+struct ChipFlowLayout: Layout {
+    /// LAYOUT: gap between chips, both horizontally and between rows.
+    var spacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let rows = computeRows(maxWidth: proposal.width ?? .infinity, subviews: subviews)
+        let width = rows.map(\.width).max() ?? 0
+        let height = rows.reduce(0) { $0 + $1.height }
+            + spacing * CGFloat(max(0, rows.count - 1))
+        return CGSize(width: proposal.width ?? width, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var y = bounds.minY
+        for row in computeRows(maxWidth: bounds.width, subviews: subviews) {
+            var x = bounds.minX
+            for index in row.indices {
+                let size = subviews[index].sizeThatFits(.unspecified)
+                subviews[index].place(
+                    // Center each chip vertically within its row.
+                    at: CGPoint(x: x, y: y + (row.height - size.height) / 2),
+                    anchor: .topLeading,
+                    proposal: .unspecified
+                )
+                x += size.width + spacing
+            }
+            y += row.height + spacing
+        }
+    }
+
+    private struct Row {
+        var indices: [Int] = []
+        var width: CGFloat = 0
+        var height: CGFloat = 0
+    }
+
+    private func computeRows(maxWidth: CGFloat, subviews: Subviews) -> [Row] {
+        var rows: [Row] = []
+        var current = Row()
+        for (index, subview) in subviews.enumerated() {
+            let size = subview.sizeThatFits(.unspecified)
+            let neededWidth = current.width
+                + (current.indices.isEmpty ? 0 : spacing)
+                + size.width
+            if !current.indices.isEmpty && neededWidth > maxWidth {
+                rows.append(current)
+                current = Row()
+            }
+            current.width += (current.indices.isEmpty ? 0 : spacing) + size.width
+            current.indices.append(index)
+            current.height = max(current.height, size.height)
+        }
+        if !current.indices.isEmpty { rows.append(current) }
+        return rows
+    }
+}
+
 // MARK: - Zone chip
 
 /// Pill chip showing a matching geofence name (e.g. "Home"). Tint and SF

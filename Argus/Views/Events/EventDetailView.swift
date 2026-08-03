@@ -443,11 +443,12 @@ struct EventDetailView: View {
         }
     }
 
-    /// Zone/tag/score chips at the top of the info column. Stacked
-    /// vertically — side by side the labels truncated on narrow screens.
+    /// Zone/tag/score chips at the top of the info column. Side by side, but
+    /// in a wrapping flow layout so labels never truncate on narrow screens —
+    /// chips that don't fit drop to the next line instead.
     private var headerChips: some View {
-        // UI: header chip stack
-        VStack(alignment: .leading, spacing: 6) {
+        // UI: header chip row
+        ChipFlowLayout(spacing: 6) {
             if !event.zone.isEmpty {
                 ZoneChip(
                     zone: event.zone,
