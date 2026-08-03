@@ -2,20 +2,99 @@
 //  EventsMapMarkers.swift
 //  Argus
 //
-//  Marker builder for the events map. Prefers the matching geofence's
-//  user-chosen color + SF Symbol when the event is inside a zone; falls
-//  back to the existing tag-based scheme otherwise.
+//  Marker + cluster builder for the events map. Events that sit close
+//  together at the current zoom level are grouped into one count badge that
+//  splits apart as the user zooms in. Single events keep the geofence/tag
+//  styling. Search keywords: UI:map-cluster, COLOR:map-marker, ICON:map-marker
 //
 
 import SwiftUI
+import SwiftData
 import MapKit
+
+// MARK: - Cluster model
+
+/// A zoom-dependent group of events drawn as one annotation. Rebuilt every
+/// time the camera settles, so groups split naturally as the user zooms in.
+struct EventCluster: Identifiable {
+    private(set) var events: [Event]
+    private(set) var center: CLLocationCoordinate2D
+
+    /// Identity follows the lead event so SwiftUI can match annotations
+    /// across camera changes when the grouping didn't actually change.
+    var id: PersistentIdentifier { representative.persistentModelID }
+
+    /// The member whose name the badge shows — prefer a user-named event,
+    /// then the highest-activity one.
+    var representative: Event {
+        events.first(where: { !$0.customName.isEmpty })
+            ?? events.max(by: { $0.interestingnessScore < $1.interestingnessScore })
+            ?? events[0]
+    }
+
+    /// Geographic spread of the members in degrees. Used to decide whether
+    /// zooming in can split the cluster or the pins share one location.
+    var spread: (lat: Double, lon: Double) {
+        let coords = events.compactMap { MarkerStyle.coordinate($0) }
+        guard let first = coords.first else { return (0, 0) }
+        var minLat = first.latitude, maxLat = first.latitude
+        var minLon = first.longitude, maxLon = first.longitude
+        for c in coords.dropFirst() {
+            minLat = min(minLat, c.latitude);  maxLat = max(maxLat, c.latitude)
+            minLon = min(minLon, c.longitude); maxLon = max(maxLon, c.longitude)
+        }
+        return (maxLat - minLat, maxLon - minLon)
+    }
+
+    mutating func absorb(_ event: Event, at coord: CLLocationCoordinate2D) {
+        // Keep the badge at the running mean of its members so it sits
+        // between the pins it stands in for.
+        let n = Double(events.count)
+        center.latitude = (center.latitude * n + coord.latitude) / (n + 1)
+        center.longitude = (center.longitude * n + coord.longitude) / (n + 1)
+        events.append(event)
+    }
+}
+
+enum EventClusterer {
+    /// TUNING: pins closer together than this fraction of the visible span
+    /// are merged into one badge. Bigger = more aggressive grouping.
+    static let mergeFraction = 0.05
+
+    /// Greedy proximity grouping relative to the visible region. With no
+    /// region yet (first frame), only events at the exact same spot merge —
+    /// that still fixes identical-location pins hiding each other.
+    static func clusters(events: [Event],
+                         visibleRegion: MKCoordinateRegion?) -> [EventCluster] {
+        let latGap = (visibleRegion?.span.latitudeDelta ?? 0) * mergeFraction
+        let lonGap = (visibleRegion?.span.longitudeDelta ?? 0) * mergeFraction
+        var clusters: [EventCluster] = []
+        for event in events {
+            guard let coord = MarkerStyle.coordinate(event) else { continue }
+            if let index = clusters.firstIndex(where: {
+                abs($0.center.latitude - coord.latitude) <= latGap &&
+                abs($0.center.longitude - coord.longitude) <= lonGap
+            }) {
+                clusters[index].absorb(event, at: coord)
+            } else {
+                clusters.append(EventCluster(events: [event], center: coord))
+            }
+        }
+        return clusters
+    }
+}
+
+// MARK: - Map content
 
 @MainActor
 @MapContentBuilder
-func eventMarkers(events: [Event],
-                  fences: [Geofence]) -> some MapContent {
-    ForEach(events) { event in
-        if let coord = MarkerStyle.coordinate(event) {
+func eventMarkers(clusters: [EventCluster],
+                  fences: [Geofence],
+                  onClusterTap: @escaping (EventCluster) -> Void) -> some MapContent {
+    ForEach(clusters) { cluster in
+        if cluster.events.count == 1,
+           let event = cluster.events.first,
+           let coord = MarkerStyle.coordinate(event) {
             Marker(
                 MarkerStyle.title(for: event),
                 systemImage: MarkerStyle.symbol(for: event, fences: fences),
@@ -23,7 +102,37 @@ func eventMarkers(events: [Event],
             )
             .tint(MarkerStyle.color(for: event, fences: fences))
             .tag(event as Event?)
+        } else {
+            // TEXT: cluster label — lead event's name plus how many more.
+            Annotation(
+                "\(MarkerStyle.title(for: cluster.representative)) +\(cluster.events.count - 1)",
+                coordinate: cluster.center
+            ) {
+                ClusterBadge(
+                    count: cluster.events.count,
+                    tint: MarkerStyle.color(for: cluster.representative, fences: fences)
+                )
+                .onTapGesture { onClusterTap(cluster) }
+            }
         }
+    }
+}
+
+/// UI: circular count badge standing in for a group of pins.
+private struct ClusterBadge: View {
+    let count: Int
+    let tint: Color
+
+    var body: some View {
+        Text("\(count)")
+            .font(.caption.bold())
+            .foregroundStyle(.white)
+            // LAYOUT: badge size — grows slightly for 3+ digit counts.
+            .padding(8)
+            .frame(minWidth: 30, minHeight: 30)
+            .background(tint.gradient, in: Circle())
+            .overlay(Circle().stroke(.white, lineWidth: 2))
+            .shadow(radius: 2)
     }
 }
 
