@@ -80,4 +80,44 @@ enum EventDeleter {
         }
         try? modelContext.save()
     }
+
+    /// Clips no event's timestamp falls inside — the surrounding minutes of
+    /// footage that only surface in the Videos tab. Every clip an event's
+    /// detail view would open is excluded.
+    static func videosWithoutEvents(modelContext: ModelContext) -> [VideoRecording] {
+        let videos = (try? modelContext.fetch(FetchDescriptor<VideoRecording>())) ?? []
+        guard !videos.isEmpty else { return [] }
+        // One sorted timestamp list + binary search per clip instead of a
+        // count query per clip — per-clip fetches crawl on large libraries.
+        let events = (try? modelContext.fetch(FetchDescriptor<Event>())) ?? []
+        let timestamps = events.map(\.timestamp).sorted()
+        return videos.filter { video in
+            !containsTimestamp(from: video.startTime, to: video.endTime, sorted: timestamps)
+        }
+    }
+
+    /// Remove every clip no event references, keeping all event footage.
+    /// Only library records go — files on the source drive are untouched.
+    /// Returns how many clip records were removed.
+    @discardableResult
+    static func deleteVideosWithoutEvents(modelContext: ModelContext) -> Int {
+        let unattached = videosWithoutEvents(modelContext: modelContext)
+        for video in unattached {
+            modelContext.delete(video)
+        }
+        try? modelContext.save()
+        return unattached.count
+    }
+
+    /// Whether any timestamp in the sorted list lands inside [start, end].
+    private static func containsTimestamp(from start: Date, to end: Date,
+                                          sorted timestamps: [Date]) -> Bool {
+        var lo = 0
+        var hi = timestamps.count
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if timestamps[mid] < start { lo = mid + 1 } else { hi = mid }
+        }
+        return lo < timestamps.count && timestamps[lo] <= end
+    }
 }

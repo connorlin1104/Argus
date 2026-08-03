@@ -29,6 +29,10 @@ struct VideoListView: View {
     /// UI: gate the scan-all button behind a confirmation — scanning a big
     /// library takes a while and can make the phone feel slow.
     @State private var showScanConfirmation = false
+    /// UI: confirmation for removing clips no event references. The count is
+    /// captured on tap so the alert title can say how many would go.
+    @State private var showTrimConfirmation = false
+    @State private var trimCount = 0
     var eventTime: Date?
 
     @Query(sort: [SortDescriptor(\VideoRecording.startTime, order: .reverse)])
@@ -65,6 +69,27 @@ struct VideoListView: View {
                 } message: {
                     Text("Every clip is scanned on this device to find people, vehicles, and license plates. The results power event tags, activity levels, and AI summaries. Scanning can take a while and the app may feel slow until it finishes. Nothing leaves your device.")
                 }
+        }
+        // UI: confirmation pop-up for "remove clips without events". Attached
+        // to the stack, not `content`, so it can't collide with the scan alert.
+        .alert(
+            trimCount == 0
+                ? "No clips to remove"
+                : "Remove \(trimCount) clip\(trimCount == 1 ? "" : "s")?",
+            isPresented: $showTrimConfirmation
+        ) {
+            if trimCount > 0 {
+                Button("Remove", role: .destructive) {
+                    EventDeleter.deleteVideosWithoutEvents(modelContext: modelContext)
+                }
+            }
+            Button(trimCount == 0 ? "OK" : "Cancel", role: .cancel) {}
+        } message: {
+            Text(trimCount == 0
+                // TEXT: nothing-to-remove explainer
+                ? "Every clip in the library belongs to an event."
+                // TEXT: trim explainer — clips events use are never removed
+                : "These clips aren't part of any event and only show in this list. Every event keeps all of its clips, and the original files on your drive are never touched.")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         // UI: the video popup is a manual overlay on both platforms so that
@@ -226,6 +251,22 @@ struct VideoListView: View {
                 }
                 .disabled(videos.isEmpty)
                 .help("Runs on-device Vision detection on every clip to find people, vehicles, and license plates. Results power event tags, scores, and AI summaries. No files are exported.")
+            }
+        }
+        // BUTTON: remove clips no event references — frees up this list
+        // without touching any event's footage. Hidden in the event-scoped
+        // "Event clips" list, where every clip belongs to the event.
+        if eventTime == nil {
+            ToolbarItem {
+                Button {
+                    trimCount = EventDeleter.videosWithoutEvents(modelContext: modelContext).count
+                    showTrimConfirmation = true
+                } label: {
+                    Label("Remove clips not in any event", systemImage: "trash")
+                }
+                // Disabled mid-scan — the analyzer is iterating these rows.
+                .disabled(videos.isEmpty || videoAnalyzer.isAnalyzing)
+                .help("Removes clips that aren't part of any event. Events keep all their clips, and files on your drive are untouched.")
             }
         }
     }
