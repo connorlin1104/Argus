@@ -56,7 +56,9 @@ final class ImportFeedback {
         } else if tally.insertedEvents == 0 {
             message = "Nothing new to import — \(count(tally.skippedEvents, "event")) in that folder \(tally.skippedEvents == 1 ? "is" : "are") already imported."
         } else {
-            var text = "Imported \(count(tally.insertedEvents, "event")) with \(count(tally.insertedVideos, "clip"))."
+            // Imported events stay hidden until analyzed — say so, or the
+            // still-empty list makes the import look like it did nothing.
+            var text = "Imported \(count(tally.insertedEvents, "event")) with \(count(tally.insertedVideos, "clip")). Each event appears once it finishes analyzing."
             if tally.skippedEvents > 0 {
                 text += " Skipped \(count(tally.skippedEvents, "event")) already imported."
             }
@@ -151,6 +153,10 @@ enum EventsImportRunner {
                 tally.skippedEvents += 1
                 continue
             }
+            // Hidden from the events list until its clips are scanned and
+            // summarized — the follow-up scheduler reveals each event once
+            // it's ready to open instead of listing it half-populated.
+            event.isPendingAnalysis = true
             modelContext.insert(event)
             freshlyInserted.append(event)
             tally.insertedEvents += 1

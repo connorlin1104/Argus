@@ -55,6 +55,11 @@ final class Event {
     /// Trip cluster this event belongs to. Stamped by TripGrouper.
     var tripID: UUID? = nil
 
+    /// True from import until the post-import clip scan + summary finish, so
+    /// the events list only shows events that are ready to open. Cleared by
+    /// ImportFollowUpScheduler (or its stranded-event rescue at launch).
+    var isPendingAnalysis: Bool = false
+
     init(source: String, camera: String, city: String, estLatitude: String, estLongitude: String, reason: String, timestamp: Date, interestingnessScore: Double = 0, tag: String = "unknown", summary: String = "") {
         self.source = source
         self.camera = camera

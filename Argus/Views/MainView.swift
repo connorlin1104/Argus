@@ -10,6 +10,8 @@ import SwiftUI
 import SwiftData
 
 struct MainView: View {
+    @Environment(\.modelContext) private var modelContext
+
     var body: some View {
         // UI: root TabView holding the four primary tabs.
         // TEXT: change labels here to rename the tabs site-wide.
@@ -31,6 +33,11 @@ struct MainView: View {
                 .tabItem {
                     Label("Settings", systemImage: "gearshape.fill")
                 }
+        }
+        // Events hidden behind isPendingAnalysis whose follow-up scan died
+        // with a previous session would otherwise stay invisible forever.
+        .onAppear {
+            ImportFollowUpScheduler.shared.releaseStrandedEvents(modelContext: modelContext)
         }
     }
 }

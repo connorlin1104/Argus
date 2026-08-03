@@ -99,7 +99,12 @@ private struct EventsListRoot: View {
     init(filterState: EventsListFilterState, fences: [Geofence]) {
         self.filterState = filterState
         _events = Query(Self.descriptor(for: filterState, fences: fences))
-        var probe = FetchDescriptor<Event>()
+        // Pending events don't count as "imported" yet — the hero import UI
+        // (with the analyzing banner over it) stays up until the first one
+        // finishes its scan.
+        var probe = FetchDescriptor<Event>(
+            predicate: #Predicate { $0.isPendingAnalysis == false }
+        )
         probe.fetchLimit = 1
         _anyEvent = Query(probe)
     }
@@ -149,6 +154,9 @@ private struct EventsListRoot: View {
             // `== ""` rather than .isEmpty — SwiftData mistranslates .isEmpty
             // on stored strings and the clause silently matches nothing.
             && (!outsideZoneOnly || event.zone == "")
+            // Freshly imported events stay hidden until their clips are
+            // scanned + summarized (the banner shows the analysis progress).
+            && event.isPendingAnalysis == false
         }
 
         let sort: [SortDescriptor<Event>]

@@ -78,7 +78,14 @@ final class ImportFollowUpScheduler {
         // the batch (both runners are single-flight).
         while VideoAnalyzer.shared.isAnalyzing || EventsImportRunner.autoSummaryRunner.isRunning {
             try? await Task.sleep(for: .seconds(1))
-            if Task.isCancelled { return }
+            if Task.isCancelled {
+                // A new import cancelled us — put the batch back so its drain
+                // picks these up. Dropping them here would leave the events
+                // stuck in isPendingAnalysis (hidden) until the next launch.
+                pendingEvents.append(contentsOf: events)
+                pendingVideos.append(contentsOf: videos)
+                return
+            }
         }
 
         // Event-by-event: scan one event's clips, summarize that event, then
@@ -126,6 +133,13 @@ final class ImportFollowUpScheduler {
                     modelContext: modelContext
                 )
             }
+            // Scan + summary done — reveal the event in the list. Saved per
+            // chunk so each event appears the moment it's ready instead of
+            // when the whole batch lands.
+            chunk.event.isPendingAnalysis = false
+            do { try modelContext.save() } catch {
+                print("modelContext.save failed: \(error)")
+            }
         }
         // Clips no event's timestamp falls inside (the other minutes of a
         // Sentry save) are NOT scanned automatically — sweeping the whole
@@ -133,5 +147,20 @@ final class ImportFollowUpScheduler {
         // imports, and the timeline already surfaces those clips. The
         // Videos tab's manual scan covers them if the user wants markers.
         VideoAnalyzer.shared.endBatch()
+    }
+
+    /// Reveal events left hidden by a previous session (app quit or crashed
+    /// mid-scan — the pending queues are in-memory, so their follow-ups are
+    /// gone for good). Called once at launch, before any import can queue.
+    func releaseStrandedEvents(modelContext: ModelContext) {
+        guard activeImports == 0, pendingEvents.isEmpty else { return }
+        let descriptor = FetchDescriptor<Event>(
+            predicate: #Predicate { $0.isPendingAnalysis == true }
+        )
+        guard let stranded = try? modelContext.fetch(descriptor), !stranded.isEmpty else { return }
+        for event in stranded { event.isPendingAnalysis = false }
+        do { try modelContext.save() } catch {
+            print("modelContext.save failed: \(error)")
+        }
     }
 }
