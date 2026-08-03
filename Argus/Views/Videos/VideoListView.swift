@@ -26,6 +26,9 @@ struct VideoListView: View {
     #endif
     private var videoAnalyzer = VideoAnalyzer.shared
     @State private var playingVideo: VideoRecording?
+    /// UI: gate the scan-all button behind a confirmation — scanning a big
+    /// library takes a while and can make the phone feel slow.
+    @State private var showScanConfirmation = false
     var eventTime: Date?
 
     @Query(sort: [SortDescriptor(\VideoRecording.startTime, order: .reverse)])
@@ -54,6 +57,14 @@ struct VideoListView: View {
                 .navigationSubtitle("\(videos.count) clip\(videos.count == 1 ? "" : "s")")
                 #endif
                 .toolbar { analyzeToolbar }
+                // UI: confirmation pop-up before a scan kicks off.
+                // TEXT: scan explainer — keep in sync with the button's help.
+                .alert("Scan \(videos.count) clip\(videos.count == 1 ? "" : "s")?", isPresented: $showScanConfirmation) {
+                    Button("Continue") { runAnalysis() }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("Every clip is scanned on this device to find people, vehicles, and license plates. The results power event tags, activity levels, and AI summaries. Scanning can take a while and the app may feel slow until it finishes. Nothing leaves your device.")
+                }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         // UI: the video popup is a manual overlay on both platforms so that
@@ -209,7 +220,7 @@ struct VideoListView: View {
                     .help("Scanning clips — progress shows in the Events tab.")
             } else {
                 Button {
-                    runAnalysis()
+                    showScanConfirmation = true
                 } label: {
                     Label("Scan clips for people & plates", systemImage: "wand.and.stars")
                 }
