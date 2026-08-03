@@ -77,6 +77,9 @@ private struct EventsListRoot: View {
     // === Import feedback ===
     /// Shared banner state every import path (picker, drop, iOS files) feeds.
     private var importFeedback = ImportFeedback.shared
+    /// Drives the post-import "Analyzing…" banner — the scan progress lives
+    /// here on the Events tab, since this is where its results appear.
+    private var videoAnalyzer = VideoAnalyzer.shared
 
     // === Navigation ===
     /// NAV: typed path for the events tab. Push events with `path.append(event)`.
@@ -290,6 +293,21 @@ private struct EventsListRoot: View {
             HStack(spacing: 10) {
                 ProgressView().controlSize(.small)
                 Text("Importing…") // TEXT: in-flight import banner
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .liquidGlassCard(cornerRadius: 12)
+            .padding(.bottom, 12)
+        } else if videoAnalyzer.isAnalyzing {
+            // UI: clip-scan progress. Events stay hidden until analyzed, so
+            // this doubles as "your import is on its way" feedback.
+            HStack(spacing: 10) {
+                ProgressView(value: videoAnalyzer.progress)
+                    .progressViewStyle(.linear)
+                    .frame(width: 140)
+                // TEXT: analyzing banner
+                Text("Analyzing videos… \(videoAnalyzer.completedVideos)/\(videoAnalyzer.totalVideos)")
+                    .font(.callout.monospacedDigit())
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)

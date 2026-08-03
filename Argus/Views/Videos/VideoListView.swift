@@ -195,32 +195,18 @@ struct VideoListView: View {
 
     // MARK: - Toolbar
 
-    /// BUTTON: "Scan clips" with linear progress + status text while running.
-    /// Runs on-device Vision detection to find people / vehicles / license
-    /// plates. Results are written back into each clip's markersJSON and
-    /// feed event tags + AI summaries. NOT an export.
+    /// BUTTON: "Scan clips". Runs on-device Vision detection to find people /
+    /// vehicles / license plates. Results are written back into each clip's
+    /// markersJSON and feed event tags + AI summaries. NOT an export.
+    /// While a scan runs, only a small spinner shows here — the full progress
+    /// bar lives in the Events tab banner, where the results appear.
     @ToolbarContentBuilder
     private var analyzeToolbar: some ToolbarContent {
         ToolbarItem {
             if videoAnalyzer.isAnalyzing {
-                // UI: progress chip — "Scanning… 12/40" + per-task label
-                HStack(spacing: 8) {
-                    ProgressView(value: videoAnalyzer.progress)
-                        .progressViewStyle(.linear)
-                        .frame(width: 140)
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text("Scanning \(videoAnalyzer.completedVideos)/\(videoAnalyzer.totalVideos)")
-                            .font(.caption.monospacedDigit())
-                        if !videoAnalyzer.currentTaskLabel.isEmpty {
-                            Text(videoAnalyzer.currentTaskLabel)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                        }
-                    }
-                }
-                .help("Scanning clips for people, vehicles, and license plates. No files are exported — results power event tags, scores, and AI summaries.")
+                ProgressView()
+                    .controlSize(.small)
+                    .help("Scanning clips — progress shows in the Events tab.")
             } else {
                 Button {
                     runAnalysis()
