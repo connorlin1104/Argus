@@ -164,15 +164,30 @@ extension SyncedMultiCamPlayerView {
     /// adjacent clips per camera when the event timestamp sits on a clip seam —
     /// drawing those overlaid a second minute of ticks on the timeline. Keys
     /// are canonical camera IDs, matching `offsets`.
+    /// TUNING: plate reads closer together than this are one continuous
+    /// sighting — only the first gets a tick. OCR samples ~every 0.5 s, so
+    /// following a car re-reads its plate all clip long ("blue everywhere").
+    private static let plateRunGapMs = 2000
+
     var allMarkers: [EventMarker] {
         var out: [EventMarker] = []
         for (cam, markers) in markersByCamera {
             let offset = offsets[cam] ?? 0
-            for m in markers {
+            var lastPlateMs: Int? = nil
+            for m in markers.sorted(by: { $0.timestampMs < $1.timestampMs }) {
                 // Vehicle detections are whole-frame classifications — a
                 // dashcam sees a car in nearly every frame, so drawing them
                 // floods the bar purple and drowns the real activity ticks.
                 if m.kind == "vehicle" { continue }
+                if m.kind == "licensePlate" {
+                    let isSameRun = lastPlateMs.map {
+                        m.timestampMs - $0 <= Self.plateRunGapMs
+                    } ?? false
+                    lastPlateMs = m.timestampMs
+                    // Collapse each continuous run into one tick at the moment
+                    // the plate first became readable.
+                    if isSameRun { continue }
+                }
                 out.append(EventMarker(
                     kind: m.kind,
                     eventSeconds: offset + Double(m.timestampMs) / 1000.0
