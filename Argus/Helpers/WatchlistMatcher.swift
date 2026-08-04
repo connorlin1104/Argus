@@ -28,14 +28,17 @@ enum WatchlistMatcher {
 
     /// Every watchlist entry the event's plate reads matched, in watchlist
     /// order, one match per entry with the exact tier preferred. Candidates
-    /// come from the OCR text the scan stored on the event AND plate-like
-    /// words in the AI summary — search checks both, so the chips should
-    /// too. Matching is per-plate-word: the old whole-summary substring
-    /// match let a short entry like "8Y" flag any event whose summary said
+    /// come from the OCR text the scan stored on the event, plus plate-like
+    /// words in the AI summary, the event's name, and its notes — every
+    /// text field the search bar can find a plate in should also chip.
+    /// Matching is per-plate-word: the old whole-summary substring match
+    /// let a short entry like "8Y" flag any event whose summary said
     /// someone "walked by".
     static func matches(event: Event, in watchlist: [Watchlist]) -> [Match] {
         let candidates = (EventSearchMatcher.plateCandidates(in: event.plateText)
-            + EventSearchMatcher.plateCandidates(in: event.summary))
+            + EventSearchMatcher.plateCandidates(in: event.summary)
+            + EventSearchMatcher.plateCandidates(in: event.customName)
+            + EventSearchMatcher.plateCandidates(in: event.notes))
             .map { EventSearchMatcher.normalizePlate($0) }
             .filter { !$0.isEmpty }
         guard !candidates.isEmpty else { return [] }
