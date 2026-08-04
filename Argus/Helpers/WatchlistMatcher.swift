@@ -2,9 +2,10 @@
 //  WatchlistMatcher.swift
 //  Argus
 //
-//  Matches an event's stored plate reads against a Watchlist using the
-//  OCR-tolerant normalization in EventSearchMatcher. Matches carry a
-//  confidence tier: exact reads badge plainly, near-misses (partial reads,
+//  Matches an event's plate text against a Watchlist using the OCR-tolerant
+//  normalization in EventSearchMatcher. Entry-centric: every watched plate
+//  the event's footage detected gets its own match, each carrying a
+//  confidence tier — exact reads badge plainly, near-misses (partial reads,
 //  one misread character like M↔N) badge as "Possibly".
 //
 
@@ -12,9 +13,9 @@ import Foundation
 
 enum WatchlistMatcher {
 
-    /// A watchlist hit for one plate read. `isExact` is false for the fuzzy
-    /// tiers (containment / one-character substitution) — the UI prefixes
-    /// those with "Possibly".
+    /// A watchlist hit on an event. `isExact` is false for the fuzzy tiers
+    /// (containment / one-character substitution) — the UI prefixes those
+    /// with "Possibly".
     struct Match {
         let entry: Watchlist
         let isExact: Bool
@@ -25,51 +26,43 @@ enum WatchlistMatcher {
     /// 25% miss — too loose, it flagged unrelated plates.
     private static let minLengthForSubstitution = 5
 
-    /// Returns the best watchlist match across the event's plate reads, or
-    /// nil. Reads come from the OCR text the scan stored on the event;
-    /// plate-like words in the AI summary are a fallback for events saved
-    /// before plate text was persisted. Matching is per-plate-word — the old
-    /// whole-summary substring match let a short entry like "8Y" flag any
-    /// event whose summary said someone "walked by".
-    static func match(event: Event, in watchlist: [Watchlist]) -> Match? {
-        var candidates = EventSearchMatcher.plateCandidates(in: event.plateText)
-        if candidates.isEmpty {
-            candidates = EventSearchMatcher.plateCandidates(in: event.summary)
-        }
-        var possible: Match? = nil
-        for candidate in candidates {
-            guard let match = match(plateRead: candidate, in: watchlist) else { continue }
-            if match.isExact { return match }
-            possible = possible ?? match
-        }
-        return possible
-    }
+    /// Every watchlist entry the event's plate reads matched, in watchlist
+    /// order, one match per entry with the exact tier preferred. Candidates
+    /// come from the OCR text the scan stored on the event AND plate-like
+    /// words in the AI summary — search checks both, so the chips should
+    /// too. Matching is per-plate-word: the old whole-summary substring
+    /// match let a short entry like "8Y" flag any event whose summary said
+    /// someone "walked by".
+    static func matches(event: Event, in watchlist: [Watchlist]) -> [Match] {
+        let candidates = (EventSearchMatcher.plateCandidates(in: event.plateText)
+            + EventSearchMatcher.plateCandidates(in: event.summary))
+            .map { EventSearchMatcher.normalizePlate($0) }
+            .filter { !$0.isEmpty }
+        guard !candidates.isEmpty else { return [] }
 
-    /// Match a single OCR plate read against the watchlist. Used by the
-    /// per-plate chips so each read can carry its own entry's color.
-    static func match(plateRead: String, in watchlist: [Watchlist]) -> Match? {
-        let candidate = EventSearchMatcher.normalizePlate(plateRead)
-        guard !candidate.isEmpty else { return nil }
-
-        var possible: Match? = nil
+        var results: [Match] = []
         for entry in watchlist {
             let needle = EventSearchMatcher.normalizePlate(entry.plateText)
             guard !needle.isEmpty else { continue }
-            if candidate == needle {
-                return Match(entry: entry, isExact: true)
+            if candidates.contains(needle) {
+                results.append(Match(entry: entry, isExact: true))
+                continue
             }
             // Below plausible-plate length only an exact match counts.
-            guard needle.count >= 4, possible == nil else { continue }
+            guard needle.count >= 4 else { continue }
             // Bidirectional containment tolerates partial OCR reads (a
             // 5-char read of a 6-char watched plate). One substitution at
             // equal length tolerates a misread character the normalization
             // map doesn't cover (M↔N, E↔F).
-            if candidate.contains(needle) || needle.contains(candidate)
-                || isOneSubstitutionApart(candidate, needle) {
-                possible = Match(entry: entry, isExact: false)
+            let isPossible = candidates.contains { candidate in
+                candidate.contains(needle) || needle.contains(candidate)
+                    || isOneSubstitutionApart(candidate, needle)
+            }
+            if isPossible {
+                results.append(Match(entry: entry, isExact: false))
             }
         }
-        return possible
+        return results
     }
 
     /// True when the strings have equal length and differ in exactly one
