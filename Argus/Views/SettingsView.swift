@@ -21,6 +21,7 @@ struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
 
     @State private var showPicker: Bool = false
+    @State private var showAddPlate: Bool = false
     @State private var summaryRunner = AutoSummaryRunner()
     /// Shown in the delete-all footer. Cached counts instead of @Querys —
     /// a query materialized every Event each time the Settings tab appeared.
@@ -40,7 +41,7 @@ struct SettingsView: View {
             Form {
                 appearanceSection
                 SettingsGeofenceSection(showPicker: $showPicker)
-                WatchlistSection()
+                WatchlistSection(showAddSheet: $showAddPlate)
                 librarySection
                 // Devices without Apple Intelligence never see the AI section
                 // rather than seeing it disabled with an explanation.
@@ -66,6 +67,12 @@ struct SettingsView: View {
                     modelContext.insert(fence)
                     // New zones apply immediately — no manual recompute needed.
                     SettingsBulkActions.recomputeZones(modelContext: modelContext)
+                }
+            }
+            .sheet(isPresented: $showAddPlate) {
+                WatchlistAddSheet { plate, note, colorHex in
+                    let entry = Watchlist(plateText: plate, note: note, colorHex: colorHex)
+                    modelContext.insert(entry)
                 }
             }
         }

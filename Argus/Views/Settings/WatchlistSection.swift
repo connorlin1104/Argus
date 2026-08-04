@@ -3,7 +3,9 @@
 //  Argus
 //
 //  Settings UI for the plate watchlist. List + an "Add plate" button that
-//  opens a WatchlistAddSheet (the inline-form layout was fiddly on macOS).
+//  opens a WatchlistAddSheet. Presentation state lives in SettingsView (like
+//  the geofence picker) — a .sheet attached to a Section inside the Form
+//  dismissed itself on first presentation when the row re-rendered.
 //
 
 import SwiftUI
@@ -13,7 +15,7 @@ struct WatchlistSection: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \Watchlist.plateText) private var entries: [Watchlist]
 
-    @State private var showAddSheet: Bool = false
+    @Binding var showAddSheet: Bool
 
     var body: some View {
         Section("Watchlist plates") {
@@ -28,12 +30,6 @@ struct WatchlistSection: View {
                 showAddSheet = true
             } label: {
                 Label("Add plate", systemImage: "plus.circle.fill")
-            }
-        }
-        .sheet(isPresented: $showAddSheet) {
-            WatchlistAddSheet { plate, note, colorHex in
-                let entry = Watchlist(plateText: plate, note: note, colorHex: colorHex)
-                modelContext.insert(entry)
             }
         }
     }
