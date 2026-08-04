@@ -127,4 +127,4 @@ Everything — Vision detection, license-plate text recognition, and AI summarie
 
 ## License
 
-This is a personal project. No license is set; treat it as "all rights reserved" unless / until that changes.
+This is a personal project. No license is currently provided. All rights are reserved unless specified otherwise in the future.
