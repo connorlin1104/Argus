@@ -50,6 +50,9 @@ struct EventDetailView: View {
     /// LAYOUT: Measured height of the Details card so the mini map beside it
     /// can match it exactly.
     @State private var detailsHeight: CGFloat = 0
+    /// Confirmation gate for the toolbar archive/unarchive toggle — easy to
+    /// hit by accident next to the favorite star.
+    @State private var confirmArchiveToggle: Bool = false
 
     /// LAYOUT: drives single-column stacking on iPhone-width screens.
     #if os(iOS)
@@ -482,9 +485,23 @@ struct EventDetailView: View {
         // BUTTON: archive toggle
         ToolbarItem {
             Button {
-                event.isArchived.toggle()
+                confirmArchiveToggle = true
             } label: {
                 Image(systemName: event.isArchived ? "tray.and.arrow.up" : "archivebox")
+            }
+            .confirmationDialog(
+                event.isArchived ? "Unarchive this event?" : "Archive this event?",
+                isPresented: $confirmArchiveToggle,
+                titleVisibility: .visible
+            ) {
+                Button(event.isArchived ? "Unarchive" : "Archive") {
+                    event.isArchived.toggle()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text(event.isArchived
+                     ? "The event will reappear in the events list."
+                     : "Archived events are hidden from the events list until you re-enable them with the filter.")
             }
         }
     }
