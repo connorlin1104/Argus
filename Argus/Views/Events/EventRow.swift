@@ -122,9 +122,7 @@ struct EventRow: View {
                 )
             }
             if event.tag != "unknown" { TagChip(tag: event.tag) }
-            if let match = WatchlistMatcher.match(event: event, in: watchlist) {
-                EventWatchlistBadge(entry: match)
-            }
+            EventPlateChips(event: event, watchlist: watchlist)
         }
     }
 

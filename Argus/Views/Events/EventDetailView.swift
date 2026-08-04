@@ -461,9 +461,7 @@ struct EventDetailView: View {
             }
             if event.tag != "unknown" { TagChip(tag: event.tag) }
             if event.interestingnessScore > 0 { ScoreBadge(score: event.interestingnessScore) }
-            if let match = WatchlistMatcher.match(event: event, in: watchlist) {
-                EventWatchlistBadge(entry: match)
-            }
+            EventPlateChips(event: event, watchlist: watchlist)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
