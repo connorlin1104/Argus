@@ -11,10 +11,11 @@ import CoreLocation
 
 @Model
 final class Geofence {
-    var name: String
-    var latitude: Double
-    var longitude: Double
-    var radiusMeters: Double
+    // All fields have defaults so the type is CloudKit-syncable.
+    var name: String = ""
+    var latitude: Double = 0
+    var longitude: Double = 0
+    var radiusMeters: Double = 100
 
     /// Hex color string (e.g. "#34C759"). Drives the row chip + map marker tint.
     var colorHex: String = "#34C759"
