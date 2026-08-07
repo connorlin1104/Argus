@@ -46,23 +46,36 @@ enum EventSearchMatcher {
         return fields.filter { !$0.isEmpty }.map { $0.lowercased() }
     }
 
-    /// Normalized plate-like words found in `text`. A word qualifies when its
+    /// Normalized plate-like words found in `text`. Working word-by-word
+    /// (instead of normalizing the whole text) keeps prose from producing
+    /// phantom plates.
+    static func plateCandidates(in text: String) -> [String] {
+        var out: [String] = []
+        for word in plateWords(in: text) {
+            let normalized = normalizePlate(word)
+            if !normalized.isEmpty && !out.contains(normalized) {
+                out.append(normalized)
+            }
+        }
+        return out
+    }
+
+    /// Raw plate-like words found in `text`, uppercased and dash-stripped but
+    /// NOT OCR-folded — WatchlistMatcher compares characters itself so it can
+    /// tell an exact read from a look-alike one. A word qualifies when its
     /// dash-stripped form is 4–8 alphanumeric characters with at least one
     /// digit and one letter — the same shape DetectionEngine accepts from OCR.
-    /// Working word-by-word (instead of normalizing the whole text) keeps
-    /// prose from producing phantom plates.
-    static func plateCandidates(in text: String) -> [String] {
+    static func plateWords(in text: String) -> [String] {
         guard !text.isEmpty else { return [] }
         let words = text.split(whereSeparator: { !$0.isLetter && !$0.isNumber && $0 != "-" })
         var out: [String] = []
         for word in words {
-            let stripped = word.replacingOccurrences(of: "-", with: "")
+            let stripped = word.replacingOccurrences(of: "-", with: "").uppercased()
             guard (4...8).contains(stripped.count),
                   stripped.contains(where: \.isNumber),
                   stripped.contains(where: \.isLetter) else { continue }
-            let normalized = normalizePlate(String(word))
-            if !normalized.isEmpty && !out.contains(normalized) {
-                out.append(normalized)
+            if !out.contains(stripped) {
+                out.append(stripped)
             }
         }
         return out
