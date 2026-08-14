@@ -43,11 +43,7 @@ struct SettingsView: View {
                 SettingsGeofenceSection(showPicker: $showPicker)
                 WatchlistSection(showAddSheet: $showAddPlate)
                 librarySection
-                // Devices without Apple Intelligence never see the AI section
-                // rather than seeing it disabled with an explanation.
-                if EventSummarizer.isAvailable {
-                    aiSection
-                }
+                aiSection
                 iCloudSection
             }
             .formStyle(.grouped)
@@ -135,28 +131,44 @@ struct SettingsView: View {
 
     // MARK: - AI summaries
 
+    // Always visible, even on devices without Apple Intelligence — shown
+    // disabled with an explanation there, so the feature is discoverable
+    // rather than looking concealed.
     private var aiSection: some View {
         Section("On-device summaries") {
-            // BUTTON: backfill summaries for every event without one
-            Button {
-                SettingsBulkActions.summarizeAll(
-                    events: fetchAllEvents(),
-                    modelContext: modelContext,
-                    runner: summaryRunner
-                )
-            } label: {
+            if !EventSummarizer.isAvailable {
                 Label("Generate summaries for all events", systemImage: "sparkles")
+                    .foregroundStyle(.secondary)
+                Text("Requires Apple Intelligence, which isn't available on this device. When supported, summaries are generated entirely on-device.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                aiSectionControls
             }
-            .disabled(summaryRunner.isRunning)
+        }
+    }
 
-            if summaryRunner.isRunning {
-                ProgressView(value: summaryRunner.progress) {
-                    Text(summaryRunner.currentLabel)
-                        .font(.caption.monospacedDigit())
-                }
-                Button("Cancel") { summaryRunner.cancel() }
-                    .buttonStyle(.bordered)
+    @ViewBuilder
+    private var aiSectionControls: some View {
+        // BUTTON: backfill summaries for every event without one
+        Button {
+            SettingsBulkActions.summarizeAll(
+                events: fetchAllEvents(),
+                modelContext: modelContext,
+                runner: summaryRunner
+            )
+        } label: {
+            Label("Generate summaries for all events", systemImage: "sparkles")
+        }
+        .disabled(summaryRunner.isRunning)
+
+        if summaryRunner.isRunning {
+            ProgressView(value: summaryRunner.progress) {
+                Text(summaryRunner.currentLabel)
+                    .font(.caption.monospacedDigit())
             }
+            Button("Cancel") { summaryRunner.cancel() }
+                .buttonStyle(.bordered)
         }
     }
 
