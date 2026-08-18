@@ -43,6 +43,33 @@ enum EventSummarizer {
         #endif
     }
 
+    /// Why summaries can't run right now, worded for direct display in the
+    /// Settings UI. `nil` when the model is ready. Every tap on the
+    /// generate button must produce a visible response (App Review flagged
+    /// the silent no-op as "app not responsive"), so this string is what
+    /// the button surfaces when it can't start a run.
+    static var unavailabilityExplanation: String? {
+        #if canImport(FoundationModels)
+        if #available(macOS 26.0, iOS 26.0, *) {
+            switch SystemLanguageModel.default.availability {
+            case .available:
+                return nil
+            case .unavailable(.deviceNotEligible):
+                return "This device doesn't support Apple Intelligence, which is required for on-device summaries."
+            case .unavailable(.appleIntelligenceNotEnabled):
+                return "Turn on Apple Intelligence in the Settings app, then come back here to generate summaries. Summaries are generated entirely on-device."
+            case .unavailable(.modelNotReady):
+                return "The on-device model is still downloading or getting ready. Try again in a few minutes."
+            case .unavailable:
+                return "On-device summaries are temporarily unavailable."
+            }
+        }
+        return "On-device summaries require a newer version of the operating system."
+        #else
+        return "On-device summaries aren't supported on this device."
+        #endif
+    }
+
     /// Build a short, human-readable summary from a detection summary.
     /// `videos` are the clips covering this event — their stored detection
     /// markers become an activity timeline the model can narrate from.

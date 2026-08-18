@@ -29,6 +29,11 @@ struct SettingsView: View {
     @State private var videoCount: Int = 0
     /// Confirmation gate for the destructive "Delete all events" action.
     @State private var confirmDeleteAll: Bool = false
+    /// Alert shown when the summary button can't start a run (model
+    /// unavailable, nothing to summarize). The button must always respond
+    /// to a tap — App Review flagged the old silent no-op as a bug.
+    @State private var summaryNotice: String = ""
+    @State private var showSummaryNotice: Bool = false
 
     @AppStorage(ArgusApp.iCloudSyncDefaultsKey)
     private var iCloudSyncEnabled: Bool = false
@@ -131,44 +136,62 @@ struct SettingsView: View {
 
     // MARK: - AI summaries
 
-    // Always visible, even on devices without Apple Intelligence — shown
-    // disabled with an explanation there, so the feature is discoverable
-    // rather than looking concealed.
+    // Always visible, even on devices without Apple Intelligence, so the
+    // feature is discoverable rather than looking concealed. The button is
+    // always tappable: when a run can't start (model unavailable, nothing
+    // to summarize) the tap explains why in an alert instead of silently
+    // doing nothing — App Review filed the old inert row as "app not
+    // responsive".
     private var aiSection: some View {
         Section("On-device summaries") {
-            if !EventSummarizer.isAvailable {
+            // BUTTON: backfill summaries for every event without one
+            Button {
+                handleSummarizeAllTap()
+            } label: {
                 Label("Generate summaries for all events", systemImage: "sparkles")
-                    .foregroundStyle(.secondary)
-                Text("Requires Apple Intelligence, which isn't available on this device. When supported, summaries are generated entirely on-device.")
+            }
+            .disabled(summaryRunner.isRunning)
+            .alert("On-Device Summaries", isPresented: $showSummaryNotice) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(summaryNotice)
+            }
+
+            if summaryRunner.isRunning {
+                ProgressView(value: summaryRunner.progress) {
+                    Text(summaryRunner.currentLabel)
+                        .font(.caption.monospacedDigit())
+                }
+                Button("Cancel") { summaryRunner.cancel() }
+                    .buttonStyle(.bordered)
+            } else if let reason = EventSummarizer.unavailabilityExplanation {
+                Text(reason)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            } else {
-                aiSectionControls
             }
         }
     }
 
-    @ViewBuilder
-    private var aiSectionControls: some View {
-        // BUTTON: backfill summaries for every event without one
-        Button {
+    private func handleSummarizeAllTap() {
+        if let reason = EventSummarizer.unavailabilityExplanation {
+            summaryNotice = reason
+            showSummaryNotice = true
+            return
+        }
+        let events = fetchAllEvents()
+        let pending = events.filter { EventSummarizer.isPlaceholderSummary($0.summary) }
+        if events.isEmpty {
+            summaryNotice = "There are no events to summarize yet. Import dashcam footage from the Events tab first."
+            showSummaryNotice = true
+        } else if pending.isEmpty {
+            summaryNotice = "All \(events.count) events already have summaries."
+            showSummaryNotice = true
+        } else {
             SettingsBulkActions.summarizeAll(
-                events: fetchAllEvents(),
+                events: events,
                 modelContext: modelContext,
                 runner: summaryRunner
             )
-        } label: {
-            Label("Generate summaries for all events", systemImage: "sparkles")
-        }
-        .disabled(summaryRunner.isRunning)
-
-        if summaryRunner.isRunning {
-            ProgressView(value: summaryRunner.progress) {
-                Text(summaryRunner.currentLabel)
-                    .font(.caption.monospacedDigit())
-            }
-            Button("Cancel") { summaryRunner.cancel() }
-                .buttonStyle(.bordered)
         }
     }
 
