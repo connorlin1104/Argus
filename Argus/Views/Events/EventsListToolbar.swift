@@ -100,6 +100,8 @@ struct EventsFilterMenu: ToolbarContent {
 struct EventsImportToolbar: ToolbarContent {
     /// Presents the shared import fileImporter in the given mode.
     let present: (ImportPickerMode) -> Void
+    /// Opens the USB-drive how-to sheet (iOS menu only).
+    var showHelp: (() -> Void)? = nil
 
     var body: some ToolbarContent {
         // BUTTON: import (top-right cloud-arrow icon)
@@ -115,6 +117,14 @@ struct EventsImportToolbar: ToolbarContent {
                     present(.files)
                 } label: {
                     Label("Select Files…", systemImage: "doc.on.doc")
+                }
+                if let showHelp {
+                    Divider()
+                    Button {
+                        showHelp()
+                    } label: {
+                        Label("How to import…", systemImage: "questionmark.circle")
+                    }
                 }
             } label: {
                 Label("Import", systemImage: "square.and.arrow.down")

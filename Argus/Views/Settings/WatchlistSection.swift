@@ -14,15 +14,14 @@ import SwiftData
 struct WatchlistSection: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \Watchlist.plateText) private var entries: [Watchlist]
+    // Match counts only consider events the list can actually show.
+    @Query(filter: #Predicate<Event> { !$0.isArchived && !$0.isPendingAnalysis })
+    private var events: [Event]
 
     @Binding var showAddSheet: Bool
 
     var body: some View {
-        Section("Watchlist plates") {
-            if entries.isEmpty {
-                Text("Add a plate to flag matching events across your videos.")
-                    .foregroundStyle(.secondary)
-            }
+        Section {
             ForEach(entries) { entry in
                 row(entry)
             }
@@ -31,6 +30,12 @@ struct WatchlistSection: View {
             } label: {
                 Label("Add plate", systemImage: "plus.circle.fill")
             }
+        } header: {
+            Text("Watchlist plates")
+        } footer: {
+            // Persistent (not an empty state) — testers read the vanishing
+            // explainer as a broken feature once their first plate hid it.
+            Text("Add a plate to flag matching events across your videos.")
         }
     }
 
@@ -45,6 +50,9 @@ struct WatchlistSection: View {
                 if !entry.note.isEmpty {
                     Text(entry.note).font(.caption).foregroundStyle(.secondary)
                 }
+                Text(matchCaption(for: entry))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             Spacer()
             Button(role: .destructive) {
@@ -53,6 +61,15 @@ struct WatchlistSection: View {
                 Image(systemName: "trash")
             }
             .buttonStyle(.borderless)
+        }
+    }
+
+    private func matchCaption(for entry: Watchlist) -> String {
+        let count = WatchlistMatcher.matchCount(entry: entry, events: events)
+        switch count {
+        case 0: return "No matches yet"
+        case 1: return "1 matching event"
+        default: return "\(count) matching events"
         }
     }
 }

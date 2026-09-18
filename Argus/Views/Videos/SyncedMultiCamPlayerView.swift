@@ -40,6 +40,13 @@ struct SyncedMultiCamPlayerView: View {
     // extension files can read/write them. Don't make these `private`.
     @State var players: [String: AVPlayer] = [:]
     @State var resolvedURLs: [String: URL] = [:]
+    /// What each camera actually plays — a single clip's asset or a stitched
+    /// composition of several. Export reads from here so it can cut across
+    /// clip seams.
+    @State var assetsByCamera: [String: AVAsset] = [:]
+    /// Every URL that granted security-scoped access in setup; released in
+    /// tearDown. Stitching means a camera can hold access to several files.
+    @State var accessedURLs: [URL] = []
     @State var offsets: [String: Double] = [:]     // seconds from anchor
     @State var durations: [String: Double] = [:]
     @State var anchor: Date = .distantFuture
@@ -116,7 +123,7 @@ struct SyncedMultiCamPlayerView: View {
             }
         }
         .task(id: videoFingerprint) {
-            setupPlayers()
+            await setupPlayers()
             await loadAspectRatios()
         }
         .onDisappear {

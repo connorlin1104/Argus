@@ -41,9 +41,10 @@ struct VideoListView: View {
     init(eventTime: Date?) {
         self.eventTime = eventTime
         if let et = eventTime {
+            let cutoff = EventClipMatcher.earliestClipEnd(for: et)
             _videos = Query(
                 filter: #Predicate { video in
-                    video.startTime <= et && video.endTime >= et
+                    video.startTime <= et && video.endTime >= cutoff
                 },
                 sort: [SortDescriptor(\VideoRecording.startTime, order: .reverse)]
             )

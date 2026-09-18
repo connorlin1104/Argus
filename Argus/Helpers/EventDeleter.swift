@@ -11,9 +11,9 @@
 //  rows in the Videos tab. This helper removes an event's clips too, unless
 //  another remaining event still falls inside the clip's window.
 //
-//  Only library records are removed. The video files themselves stay where
-//  they were imported from (security-scoped bookmarks point at the
-//  originals) — deletion here never touches the user's footage on disk.
+//  Deleting a clip record also deletes its app-owned copy in ClipStore —
+//  otherwise the container's storage only ever grows. Files on the source
+//  drive (legacy bookmark rows) are never touched.
 //
 
 import Foundation
@@ -31,9 +31,10 @@ enum EventDeleter {
         var seenIDs: Set<PersistentIdentifier> = []
         for event in events {
             let t = event.timestamp
+            let cutoff = EventClipMatcher.earliestClipEnd(for: t)
             let descriptor = FetchDescriptor<VideoRecording>(
                 predicate: #Predicate<VideoRecording> { v in
-                    v.startTime <= t && v.endTime >= t
+                    v.startTime <= t && v.endTime >= cutoff
                 }
             )
             for video in (try? modelContext.fetch(descriptor)) ?? [] {
@@ -52,17 +53,34 @@ enum EventDeleter {
         // timestamp falls inside its window anymore.
         for video in candidates {
             let start = video.startTime
-            let end = video.endTime
+            let end = EventClipMatcher.latestEventTimestamp(after: video.endTime)
             let descriptor = FetchDescriptor<Event>(
                 predicate: #Predicate<Event> { e in
                     e.timestamp >= start && e.timestamp <= end
                 }
             )
             if ((try? modelContext.fetchCount(descriptor)) ?? 0) == 0 {
+                deleteStoredFile(of: video, modelContext: modelContext)
                 modelContext.delete(video)
             }
         }
         try? modelContext.save()
+    }
+
+    /// Remove a clip's app-owned file, unless another record still shares it
+    /// (legacy path-deduped libraries can hold two rows for one physical
+    /// clip; after migration both point at the same stored file).
+    private static func deleteStoredFile(of video: VideoRecording,
+                                         modelContext: ModelContext) {
+        let name = video.localFileName
+        guard !name.isEmpty else { return }
+        let id = video.persistentModelID
+        let descriptor = FetchDescriptor<VideoRecording>(
+            predicate: #Predicate<VideoRecording> { $0.localFileName == name }
+        )
+        let sharers = (try? modelContext.fetch(descriptor)) ?? []
+        guard !sharers.contains(where: { $0.persistentModelID != id }) else { return }
+        ClipStore.delete(fileName: name)
     }
 
     /// Remove every event and every clip record from the library. Geofences
@@ -76,6 +94,9 @@ enum EventDeleter {
         }
         let videos = (try? modelContext.fetch(FetchDescriptor<VideoRecording>())) ?? []
         for video in videos {
+            // Every record is going — no sharer check needed; deleting a
+            // filename twice is a harmless no-op.
+            ClipStore.delete(fileName: video.localFileName)
             modelContext.delete(video)
         }
         try? modelContext.save()
@@ -92,17 +113,20 @@ enum EventDeleter {
         let events = (try? modelContext.fetch(FetchDescriptor<Event>())) ?? []
         let timestamps = events.map(\.timestamp).sorted()
         return videos.filter { video in
-            !containsTimestamp(from: video.startTime, to: video.endTime, sorted: timestamps)
+            !containsTimestamp(from: video.startTime,
+                               to: EventClipMatcher.latestEventTimestamp(after: video.endTime),
+                               sorted: timestamps)
         }
     }
 
     /// Remove every clip no event references, keeping all event footage.
-    /// Only library records go — files on the source drive are untouched.
-    /// Returns how many clip records were removed.
+    /// App-owned copies are deleted with their records; files on the source
+    /// drive are untouched. Returns how many clip records were removed.
     @discardableResult
     static func deleteVideosWithoutEvents(modelContext: ModelContext) -> Int {
         let unattached = videosWithoutEvents(modelContext: modelContext)
         for video in unattached {
+            deleteStoredFile(of: video, modelContext: modelContext)
             modelContext.delete(video)
         }
         try? modelContext.save()

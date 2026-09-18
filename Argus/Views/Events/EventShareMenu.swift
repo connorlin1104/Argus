@@ -25,9 +25,10 @@ struct EventShareMenu: View {
     init(event: Event) {
         self.event = event
         let t = event.timestamp
+        let cutoff = EventClipMatcher.earliestClipEnd(for: t)
         _matchedVideos = Query(
             filter: #Predicate<VideoRecording> { v in
-                v.startTime <= t && v.endTime >= t
+                v.startTime <= t && v.endTime >= cutoff
             }
         )
     }

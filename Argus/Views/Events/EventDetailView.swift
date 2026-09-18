@@ -40,7 +40,14 @@ private struct DetailsHeightKey: PreferenceKey {
 
 struct EventDetailView: View {
     @Bindable var event: Event
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
     @State private var isGenerating: Bool = false
+    /// True when this event has clip records but none of their files can be
+    /// opened — imported from a drive that's now unplugged, with no app-saved
+    /// copy. Swaps the player for an explanation + remove option.
+    @State private var clipFilesMissing: Bool = false
+    @State private var confirmRemoveEvent: Bool = false
     /// LAYOUT: Owned here so the camera-select buttons in the left info column
     /// can drive the player's focus mode.
     @State private var focusedCamera: String? = nil
@@ -78,9 +85,10 @@ struct EventDetailView: View {
     init(event: Event) {
         self.event = event
         let t = event.timestamp
+        let cutoff = EventClipMatcher.earliestClipEnd(for: t)
         _matchedVideos = Query(
             filter: #Predicate<VideoRecording> { video in
-                video.startTime <= t && video.endTime >= t
+                video.startTime <= t && video.endTime >= cutoff
             },
             sort: [SortDescriptor(\VideoRecording.camera, order: .forward)]
         )
@@ -427,23 +435,66 @@ struct EventDetailView: View {
     /// The player view aligns to the trailing edge of this column so it hugs the right.
     @ViewBuilder
     private var rightPlayerColumn: some View {
-        if !matchedVideos.isEmpty {
-            SyncedMultiCamPlayerView(
-                videos: matchedVideos,
-                focusedCamera: $focusedCamera
-            )
-            .frame(maxWidth: .infinity, alignment: .trailing)
-        } else {
-            // TEXT: shown when no clip overlaps this event's timestamp
-            ContentUnavailableView(
-                "No matching clips",
-                systemImage: "play.slash",
-                description: Text("No imported videos overlap this event's timestamp (\(event.timestamp.formatted())).")
-            )
-            .frame(height: 220)
-            .liquidGlassCard(cornerRadius: 14)
-            .frame(maxWidth: .infinity, alignment: .trailing)
+        Group {
+            if !matchedVideos.isEmpty && !clipFilesMissing {
+                SyncedMultiCamPlayerView(
+                    videos: matchedVideos,
+                    focusedCamera: $focusedCamera
+                )
+                .frame(maxWidth: .infinity, alignment: .trailing)
+            } else if !matchedVideos.isEmpty {
+                missingFilesCard
+            } else {
+                // TEXT: shown when no clip overlaps this event's timestamp
+                ContentUnavailableView(
+                    "No matching clips",
+                    systemImage: "play.slash",
+                    description: Text("No imported videos overlap this event's timestamp (\(event.timestamp.formatted())).")
+                )
+                .frame(height: 220)
+                .liquidGlassCard(cornerRadius: 14)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+            }
         }
+        .task(id: matchedVideos.count) {
+            // A clip is playable when a saved copy or its source drive
+            // resolves; the card shows only when EVERY clip fails (a partial
+            // set still plays whatever's available).
+            clipFilesMissing = !matchedVideos.isEmpty
+                && matchedVideos.allSatisfy { BookmarkResolver.resolveURL(for: $0) == nil }
+        }
+    }
+
+    /// TEXT: shown when the event's clips exist as records but none of their
+    /// files can be opened — the drive is unplugged and nothing was saved in
+    /// the app. Explains how to get them back, and offers removal.
+    private var missingFilesCard: some View {
+        VStack(spacing: 12) {
+            ContentUnavailableView(
+                "Video files not found",
+                systemImage: "externaldrive.badge.questionmark",
+                description: Text("This event's clips were imported from a drive that isn't connected right now. Reconnect the drive to play them — then use Settings > Save Clips in the App to keep them on this device. Or remove the event if you no longer need it.")
+            )
+            Button("Remove This Event…", role: .destructive) {
+                confirmRemoveEvent = true
+            }
+            .confirmationDialog(
+                "Remove this event?",
+                isPresented: $confirmRemoveEvent,
+                titleVisibility: .visible
+            ) {
+                Button("Remove Event", role: .destructive) {
+                    EventDeleter.delete(events: [event], modelContext: modelContext)
+                    dismiss()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("The event and its clip records are removed from the app. Files on your drive are untouched, so you can import it again later.")
+            }
+            .padding(.bottom, 12)
+        }
+        .frame(maxWidth: .infinity)
+        .liquidGlassCard(cornerRadius: 14)
     }
 
     /// Zone/tag/score chips at the top of the info column. Side by side, but

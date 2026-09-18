@@ -15,52 +15,133 @@ extension SyncedMultiCamPlayerView {
     // MARK: - Setup
 
     /// Build one AVPlayer per camera, anchored to the earliest clip's start time.
+    /// A camera with several matched clips gets them stitched into one seamless
+    /// composition — an event moment near a minute boundary matches both the
+    /// clip containing it and the one ending just before, and playing only one
+    /// arbitrary clip left that tile frozen for the other's minute.
     /// Auto-starts playback once the players are wired up.
-    func setupPlayers() {
+    func setupPlayers() async {
         tearDown()
         guard !videos.isEmpty else {
             print("SyncedMultiCamPlayerView: no matched videos")
             return
         }
 
-        // Anchor = earliest start time across cameras.
-        let earliest = videos.map(\.startTime).min() ?? Date()
+        // Group per camera; drop copies of the same physical clip (same start
+        // second — Tesla writes one file into several event folders), keeping
+        // the scanned copy; order chronologically for stitching.
+        var byCamera: [String: [VideoRecording]] = [:]
+        for video in videos {
+            byCamera[TeslaCamera.canonical(video.camera), default: []].append(video)
+        }
+        var sources: [(cam: String, clips: [(video: VideoRecording, url: URL)])] = []
+        for (cam, camVideos) in byCamera {
+            var bestByStart: [Int: VideoRecording] = [:]
+            for video in camVideos {
+                let key = Int(video.startTime.timeIntervalSince1970)
+                if let current = bestByStart[key],
+                   current.markers.count >= video.markers.count { continue }
+                bestByStart[key] = video
+            }
+            let clips: [(video: VideoRecording, url: URL)] = bestByStart.values
+                .sorted { $0.startTime < $1.startTime }
+                .compactMap { video in
+                    guard let url = BookmarkResolver.resolveURL(for: video) else {
+                        print("SyncedMultiCamPlayerView: failed to resolve clip for camera \(cam)")
+                        return nil
+                    }
+                    return (video, url)
+                }
+            if !clips.isEmpty { sources.append((cam: cam, clips: clips)) }
+        }
+        guard !sources.isEmpty else { return }
+
+        // Anchor = earliest playable clip start across cameras.
+        let earliest = sources.map { $0.clips[0].video.startTime }.min() ?? Date()
         anchor = earliest
 
         var newPlayers: [String: AVPlayer] = [:]
         var newURLs: [String: URL] = [:]
+        var newAssets: [String: AVAsset] = [:]
+        var newAccessed: [URL] = []
         var newOffsets: [String: Double] = [:]
         var newDurations: [String: Double] = [:]
         var newMarkers: [String: [DetectionMarker]] = [:]
         var maxEnd: Double = 0
 
-        for video in videos {
-            let camKey = TeslaCamera.canonical(video.camera)
-            // De-duplicate: if we already created a player for this canonical camera, skip.
-            if newPlayers[camKey] != nil { continue }
-
-            guard let url = BookmarkResolver.resolveURL(for: video) else {
-                print("SyncedMultiCamPlayerView: failed to resolve bookmark for camera \(camKey)")
-                continue
+        for (camKey, clips) in sources {
+            for (_, url) in clips where url.startAccessingSecurityScopedResource() {
+                newAccessed.append(url)
             }
-            let didAccess = url.startAccessingSecurityScopedResource()
-            print("SyncedMultiCamPlayerView: cam=\(camKey) didAccess=\(didAccess) url=\(url.lastPathComponent)")
+            let camStart = clips[0].video.startTime
 
-            let item = AVPlayerItem(url: url)
+            let item: AVPlayerItem
+            let duration: Double
+            if clips.count == 1 {
+                let asset = AVURLAsset(url: clips[0].url)
+                item = AVPlayerItem(asset: asset)
+                duration = clips[0].video.endTime.timeIntervalSince(camStart)
+                newAssets[camKey] = asset
+                newMarkers[camKey] = clips[0].video.markers
+            } else {
+                // Stitch this camera's clips end-to-end at their real offsets,
+                // so playback and scrubbing treat them as one recording.
+                let composition = AVMutableComposition()
+                var cursor = CMTime.zero
+                var merged: [DetectionMarker] = []
+                for (video, url) in clips {
+                    let asset = AVURLAsset(url: url)
+                    let assetDuration = (try? await asset.load(.duration))
+                        ?? CMTime(seconds: video.endTime.timeIntervalSince(video.startTime),
+                                  preferredTimescale: 600)
+                    let offset = video.startTime.timeIntervalSince(camStart)
+                    let target = CMTime(seconds: offset, preferredTimescale: 600)
+                    if target > cursor {
+                        // Recording gap between clips — keep later clips at
+                        // their true wall-clock position.
+                        composition.insertEmptyTimeRange(CMTimeRange(start: cursor, end: target))
+                        cursor = target
+                    }
+                    // Clips can overlap the seam by a moment; skip the part
+                    // the previous clip already covered.
+                    let sourceStart = CMTime(seconds: max(0, cursor.seconds - offset),
+                                             preferredTimescale: 600)
+                    let range = CMTimeRange(start: sourceStart, end: assetDuration)
+                    guard range.duration > .zero else { continue }
+                    do {
+                        try await composition.insertTimeRange(range, of: asset, at: cursor)
+                    } catch {
+                        print("SyncedMultiCamPlayerView: stitch failed for \(camKey): \(error)")
+                        continue
+                    }
+                    cursor = cursor + range.duration
+                    let shiftMs = Int(offset * 1000)
+                    merged.append(contentsOf: video.markers.map {
+                        DetectionMarker(kind: $0.kind, timestampMs: $0.timestampMs + shiftMs)
+                    })
+                }
+                item = AVPlayerItem(asset: composition)
+                duration = cursor.seconds
+                newAssets[camKey] = composition
+                newMarkers[camKey] = merged
+            }
+
             let player = AVPlayer(playerItem: item)
             player.actionAtItemEnd = .pause
             newPlayers[camKey] = player
-            newURLs[camKey] = url
-            let offset = video.startTime.timeIntervalSince(earliest)
+            // Representative URL — feeds the aspect-ratio probe (all of one
+            // camera's clips share a ratio).
+            newURLs[camKey] = clips[0].url
+            let offset = camStart.timeIntervalSince(earliest)
             newOffsets[camKey] = offset
-            let duration = video.endTime.timeIntervalSince(video.startTime)
             newDurations[camKey] = duration
-            newMarkers[camKey] = video.markers
             maxEnd = max(maxEnd, offset + duration)
         }
 
         players = newPlayers
         resolvedURLs = newURLs
+        assetsByCamera = newAssets
+        accessedURLs = newAccessed
         offsets = newOffsets
         durations = newDurations
         markersByCamera = newMarkers
@@ -120,9 +201,11 @@ extension SyncedMultiCamPlayerView {
         }
         timeObserverToken = nil
         for (_, player) in players { player.pause() }
-        for (_, url) in resolvedURLs { url.stopAccessingSecurityScopedResource() }
+        for url in accessedURLs { url.stopAccessingSecurityScopedResource() }
         players.removeAll()
         resolvedURLs.removeAll()
+        assetsByCamera.removeAll()
+        accessedURLs.removeAll()
         offsets.removeAll()
         durations.removeAll()
         aspectRatios.removeAll()

@@ -58,7 +58,9 @@ final class ImportFeedback {
         } else {
             // Imported events stay hidden until analyzed — say so, or the
             // still-empty list makes the import look like it did nothing.
-            var text = "Imported \(count(tally.insertedEvents, "event")) with \(count(tally.insertedVideos, "clip")). Each event appears once it finishes analyzing."
+            // Clips are copied into the app during import, so it's safe to
+            // unplug the drive as soon as this message shows.
+            var text = "Imported \(count(tally.insertedEvents, "event")) with \(count(tally.insertedVideos, "clip")) — you can unplug the drive now. Each event appears once it finishes analyzing."
             if tally.skippedEvents > 0 {
                 text += " Skipped \(count(tally.skippedEvents, "event")) already imported."
             }
@@ -142,6 +144,7 @@ enum EventsImportRunner {
     @MainActor
     private static func persist(imported: ImportResult, modelContext: ModelContext) {
         let existingVideoPaths = currentVideoPaths(modelContext: modelContext)
+        var existingVideoKeys = currentVideoKeys(modelContext: modelContext)
         let existingEventKeys = currentEventKeys(modelContext: modelContext)
 
         var tally = ImportTally()
@@ -162,10 +165,17 @@ enum EventsImportRunner {
             tally.insertedEvents += 1
         }
         for video in imported.videos {
-            if existingVideoPaths.contains(video.url.path) {
+            // Dedupe by camera + start second as well as by path: Tesla
+            // writes the same minute-clip into every event folder that
+            // overlaps it, so the identical recording arrives under several
+            // paths. One row per physical clip, or the AI summary narrates
+            // the same activity once per copy.
+            let key = videoKey(video)
+            if existingVideoPaths.contains(video.url.path) || existingVideoKeys.contains(key) {
                 tally.skippedVideos += 1
                 continue
             }
+            existingVideoKeys.insert(key)
             modelContext.insert(video)
             freshlyInsertedVideos.append(video)
             tally.insertedVideos += 1
@@ -210,6 +220,19 @@ enum EventsImportRunner {
         descriptor.propertiesToFetch = [\.url]
         let existing = (try? modelContext.fetch(descriptor)) ?? []
         return Set(existing.map { $0.url.path })
+    }
+
+    private static func currentVideoKeys(modelContext: ModelContext) -> Set<String> {
+        var descriptor = FetchDescriptor<VideoRecording>()
+        descriptor.propertiesToFetch = [\.camera, \.startTime]
+        let existing = (try? modelContext.fetch(descriptor)) ?? []
+        return Set(existing.map(videoKey))
+    }
+
+    /// Stable key identifying one physical recording: one car can't record
+    /// two different clips on the same camera in the same second.
+    static func videoKey(_ video: VideoRecording) -> String {
+        "\(video.camera)|\(Int(video.startTime.timeIntervalSince1970))"
     }
 
     private static func currentEventKeys(modelContext: ModelContext) -> Set<String> {

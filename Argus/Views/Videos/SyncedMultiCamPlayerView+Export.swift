@@ -19,7 +19,9 @@ extension SyncedMultiCamPlayerView {
     /// TUNING: change ±5 below to widen/narrow the exported window.
     @MainActor
     func exportCurrentClip() async {
-        guard let sourceURL = resolvedURLs[primaryCamera] else { return }
+        // The camera's asset may be a stitched composition of several clips —
+        // exporting from it (not a single file) lets the ±5s window cross seams.
+        guard let asset = assetsByCamera[primaryCamera] else { return }
         let localTime = positionSeconds - (offsets[primaryCamera] ?? 0)
         let duration = durations[primaryCamera] ?? 0
         let startLocal = max(0, localTime - 5)
@@ -37,7 +39,6 @@ extension SyncedMultiCamPlayerView {
         isExporting = true
         defer { isExporting = false }
 
-        let asset = AVURLAsset(url: sourceURL)
         guard let exporter = AVAssetExportSession(
             asset: asset,
             presetName: AVAssetExportPresetHighestQuality

@@ -97,7 +97,9 @@ final class ImportFollowUpScheduler {
         var chunks: [(event: Event, videos: [VideoRecording])] = []
         for event in events.sorted(by: { $0.timestamp > $1.timestamp }) {
             let t = event.timestamp
-            let matched = remaining.filter { $0.startTime <= t && $0.endTime >= t }
+            let matched = remaining.filter {
+                EventClipMatcher.covers(start: $0.startTime, end: $0.endTime, timestamp: t)
+            }
             remaining.removeAll { clip in matched.contains { $0 === clip } }
             // The trigger camera's clip is the one the user opens first —
             // scan it ahead of the other angles.
@@ -135,7 +137,13 @@ final class ImportFollowUpScheduler {
             }
             // Scan + summary done — reveal the event in the list. Saved per
             // chunk so each event appears the moment it's ready instead of
-            // when the whole batch lands.
+            // when the whole batch lands. An event whose chunk matched no
+            // clips (and that has none in the store from an earlier import)
+            // gets the Incomplete chip instead of silently looking done; a
+            // completed pass clears the flag, so re-running analysis on a
+            // rescued event self-heals.
+            chunk.event.analysisIncomplete = chunk.videos.isEmpty
+                && !storeHasClips(for: chunk.event, modelContext: modelContext)
             chunk.event.isPendingAnalysis = false
             do { try modelContext.save() } catch {
                 print("modelContext.save failed: \(error)")
@@ -158,9 +166,29 @@ final class ImportFollowUpScheduler {
             predicate: #Predicate { $0.isPendingAnalysis == true }
         )
         guard let stranded = try? modelContext.fetch(descriptor), !stranded.isEmpty else { return }
-        for event in stranded { event.isPendingAnalysis = false }
+        for event in stranded {
+            event.isPendingAnalysis = false
+            // Flag rather than hide — these are exactly the half-imported
+            // events testers hit after killing the app mid-import. The chip
+            // plus Settings' re-run/remove actions make them actionable.
+            event.analysisIncomplete = true
+        }
         do { try modelContext.save() } catch {
             print("modelContext.save failed: \(error)")
         }
+    }
+
+    /// Whether any already-imported clip's window covers the event — a
+    /// re-imported duplicate's chunk is empty (its clips were deduped) even
+    /// though the event is fully backed by footage.
+    private func storeHasClips(for event: Event, modelContext: ModelContext) -> Bool {
+        let t = event.timestamp
+        let cutoff = EventClipMatcher.earliestClipEnd(for: t)
+        let descriptor = FetchDescriptor<VideoRecording>(
+            predicate: #Predicate<VideoRecording> { v in
+                v.startTime <= t && v.endTime >= cutoff
+            }
+        )
+        return ((try? modelContext.fetchCount(descriptor)) ?? 0) > 0
     }
 }

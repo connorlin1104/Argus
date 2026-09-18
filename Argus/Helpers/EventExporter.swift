@@ -68,9 +68,10 @@ enum EventExporter {
         var plan: [(event: Event, videos: [VideoRecording])] = []
         for event in events {
             let t = event.timestamp
+            let cutoff = EventClipMatcher.earliestClipEnd(for: t)
             let descriptor = FetchDescriptor<VideoRecording>(
                 predicate: #Predicate<VideoRecording> { v in
-                    v.startTime <= t && v.endTime >= t
+                    v.startTime <= t && v.endTime >= cutoff
                 }
             )
             plan.append((event, (try? modelContext.fetch(descriptor)) ?? []))

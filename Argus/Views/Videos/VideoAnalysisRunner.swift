@@ -124,13 +124,16 @@ enum VideoAnalysisRunner {
         // Store plate reads on whichever event covers this clip, so watchlist
         // matching works off OCR text instead of hoping the AI summary quotes
         // it. Plates attach regardless of human proximity — a drive-by car
-        // never trips the proximity check.
-        let plateReads = detections.compactMap {
-            $0.kind == .licensePlate ? $0.licensePlateText : nil
-        }
+        // never trips the proximity check. Only consensus-verified reads (the
+        // same text in ≥2 sampled frames) are stored: single-frame misreads
+        // were landing in plateText and triggering false watchlist matches.
+        let plateReads = VideoAnalyzer.verifiedPlateReads(in: detections)
         if !plateReads.isEmpty, let startTime {
             let wideWindow = startTime.addingTimeInterval(-incidentWindowSeconds)...video.endTime.addingTimeInterval(incidentWindowSeconds)
-            if let existing = existingEvent(inWindow: wideWindow, modelContext: modelContext) {
+            if let existing = nearestEvent(toClipFrom: startTime,
+                                           through: video.endTime,
+                                           inWindow: wideWindow,
+                                           modelContext: modelContext) {
                 merge(plateReads: plateReads, into: existing)
                 do { try modelContext.save() } catch { print("save failed: \(error)") }
             }
@@ -139,11 +142,13 @@ enum VideoAnalysisRunner {
         if let proximityMs = analyzer.firstProximityEvent(in: detections),
            let startTime {
             // Dedupe: if an existing event's timestamp falls within this
-            // video's recording window, enrich it instead of inserting a
-            // duplicate. Imported Sentry events already cover the incident;
-            // the scan just adds the score/tag/AI summary.
+            // video's recording window (plus the shared trailing tolerance —
+            // Tesla stamps events a few seconds after clips end), enrich it
+            // instead of inserting a duplicate. Imported Sentry events
+            // already cover the incident; the scan just adds the
+            // score/tag/AI summary.
             if let existing = existingEvent(
-                inWindow: startTime...video.endTime,
+                inWindow: startTime...EventClipMatcher.latestEventTimestamp(after: video.endTime),
                 modelContext: modelContext
             ) {
                 if summary.score > existing.interestingnessScore {
@@ -223,6 +228,34 @@ enum VideoAnalysisRunner {
             reads.append(read.replacingOccurrences(of: " ", with: ""))
         }
         event.plateText = reads.joined(separator: " ")
+    }
+
+    /// The event whose timestamp sits closest to the clip's own recording
+    /// window — 0 distance when inside it. `existingEvent(inWindow:)` takes
+    /// `.first` of the fetch, which is fine for existence checks, but the
+    /// ±10-minute plate window can hold several events and an arbitrary pick
+    /// attached plates to a neighboring event.
+    @MainActor
+    private static func nearestEvent(
+        toClipFrom clipStart: Date,
+        through clipEnd: Date,
+        inWindow window: ClosedRange<Date>,
+        modelContext: ModelContext
+    ) -> Event? {
+        let lower = window.lowerBound
+        let upper = window.upperBound
+        let descriptor = FetchDescriptor<Event>(
+            predicate: #Predicate<Event> { event in
+                event.timestamp >= lower && event.timestamp <= upper
+            }
+        )
+        let candidates = (try? modelContext.fetch(descriptor)) ?? []
+        func distance(_ event: Event) -> TimeInterval {
+            if event.timestamp >= clipStart && event.timestamp <= clipEnd { return 0 }
+            return min(abs(event.timestamp.timeIntervalSince(clipStart)),
+                       abs(event.timestamp.timeIntervalSince(clipEnd)))
+        }
+        return candidates.min { distance($0) < distance($1) }
     }
 
     /// Look up an existing Event whose timestamp falls inside the given window.

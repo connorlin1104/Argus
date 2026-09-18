@@ -36,8 +36,21 @@ struct MainView: View {
         }
         // Events hidden behind isPendingAnalysis whose follow-up scan died
         // with a previous session would otherwise stay invisible forever.
+        // Stored clip files nothing references (an import killed before its
+        // records saved) are swept here too — before any import can start
+        // copying new files.
         .onAppear {
             ImportFollowUpScheduler.shared.releaseStrandedEvents(modelContext: modelContext)
+            // Never sweep while an import is copying — its files aren't
+            // referenced by saved records yet (onAppear can re-fire when a
+            // macOS window is closed and reopened mid-import).
+            guard !ImportFeedback.shared.isImporting else { return }
+            var descriptor = FetchDescriptor<VideoRecording>()
+            descriptor.propertiesToFetch = [\.localFileName]
+            let referenced = Set(((try? modelContext.fetch(descriptor)) ?? [])
+                .map(\.localFileName)
+                .filter { !$0.isEmpty })
+            ClipStore.removeOrphans(keeping: referenced)
         }
     }
 }

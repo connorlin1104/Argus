@@ -39,7 +39,8 @@ enum ThumbnailCache {
     /// from the video file (and persisting) on a full miss. Runs off the main
     /// actor; returns nil if the bookmark can't be resolved or the frame
     /// can't be read.
-    static func thumbnail(forPath path: String, bookmark: Data) async -> CGImage? {
+    static func thumbnail(forPath path: String, bookmark: Data,
+                          localFileName: String = "") async -> CGImage? {
         let key = cacheKey(for: path)
         if let hit = memory.object(forKey: key as NSString) {
             return hit
@@ -49,7 +50,8 @@ enum ThumbnailCache {
             memory.setObject(disk, forKey: key as NSString)
             return disk
         }
-        guard let generated = await generate(bookmark: bookmark) else { return nil }
+        guard let generated = await generate(bookmark: bookmark,
+                                             localFileName: localFileName) else { return nil }
         memory.setObject(generated, forKey: key as NSString)
         writeJPEG(generated, to: fileURL)
         return generated
@@ -58,10 +60,12 @@ enum ThumbnailCache {
     // MARK: - Generation
 
     /// Extract the 1-second frame from the clip, same as the old inline
-    /// VideoRow logic. Refreshed bookmarks are dropped here (no model in
-    /// reach) — the playback/analysis paths persist them.
-    private static func generate(bookmark: Data) async -> CGImage? {
-        guard let url = BookmarkResolver.resolve(bookmark)?.url else { return nil }
+    /// VideoRow logic. App-owned copies resolve by filename; legacy rows fall
+    /// back to the bookmark. Refreshed bookmarks are dropped here (no model
+    /// in reach) — the playback/analysis paths persist them.
+    private static func generate(bookmark: Data, localFileName: String) async -> CGImage? {
+        guard let url = BookmarkResolver.localURL(fileName: localFileName)
+                ?? BookmarkResolver.resolve(bookmark)?.url else { return nil }
         let didAccess = url.startAccessingSecurityScopedResource()
         defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
         let gen = AVAssetImageGenerator(asset: AVURLAsset(url: url))

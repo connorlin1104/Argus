@@ -55,10 +55,25 @@ enum BookmarkResolver {
     /// the model when the stored one was stale so it keeps resolving in
     /// future sessions. The write is picked up by the context's normal save.
     static func resolveURL(for video: VideoRecording) -> URL? {
+        // App-owned copies resolve by filename — no bookmark, no drive
+        // needed. A missing copy falls through to the bookmark so a legacy
+        // row (or a manually cleared store) still plays from the source.
+        if let local = localURL(fileName: video.localFileName) {
+            return local
+        }
         guard let resolution = resolve(video.bookmark) else { return nil }
         if let refreshed = resolution.refreshedBookmark {
             video.bookmark = refreshed
         }
         return resolution.url
+    }
+
+    /// The ClipStore URL for a stored filename, nil when unset or the file
+    /// is gone. Shared by the model-based resolver above and ThumbnailCache
+    /// (which works from plain Sendable values, not the model).
+    static func localURL(fileName: String) -> URL? {
+        guard !fileName.isEmpty else { return nil }
+        let url = ClipStore.url(forFileName: fileName)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 }

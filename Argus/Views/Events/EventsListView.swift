@@ -65,6 +65,18 @@ private struct EventsListRoot: View {
     @State private var importPickerMode: ImportPickerMode = .folder
     @State private var showImportPicker: Bool = false
 
+    // === Import instructions (iOS) ===
+    /// The very first Import tap detours through the how-to sheet — finding a
+    /// USB drive in the Files picker is a multi-step dance nobody discovers
+    /// on their own. Later taps go straight to the picker.
+    @AppStorage("hasSeenImportInstructions") private var hasSeenImportInstructions = false
+    @State private var showImportInstructions = false
+    /// Mode the instructions sheet's "Continue to import" resumes with.
+    @State private var instructionsContinueMode: ImportPickerMode = .folder
+    /// Set by the sheet's continue button; the picker is presented from
+    /// onDismiss so the fileImporter never races the sheet's dismissal.
+    @State private var resumePickerAfterInstructions = false
+
     // === Export state ===
     @State private var exportInProgress: Bool = false
     @State private var exportProgress: Double = 0
@@ -198,7 +210,11 @@ private struct EventsListRoot: View {
                     }
                     return true
                 }
-                .overlay(alignment: .bottom) { importBanner }
+                // safeAreaInset, not .overlay(alignment: .bottom): an overlay
+                // ignores the tab bar's safe area, so the banner rendered on
+                // top of the tab items and swallowed their taps while an
+                // import/analysis was running ("tab navigation doesn't work").
+                .safeAreaInset(edge: .bottom) { importBanner }
                 .navigationTitle("Events")
                 #if os(macOS)
                 .navigationSubtitle(hasAnyEvents
@@ -234,6 +250,16 @@ private struct EventsListRoot: View {
             path.append(event)
         })
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .sheet(isPresented: $showImportInstructions, onDismiss: {
+            if resumePickerAfterInstructions {
+                resumePickerAfterInstructions = false
+                presentImportPicker(instructionsContinueMode)
+            }
+        }) {
+            ImportInstructionsSheet(onContinue: {
+                resumePickerAfterInstructions = true
+            })
+        }
         .sheet(isPresented: $exportInProgress) {
             EventExportProgressSheet(
                 progress: $exportProgress,
@@ -305,7 +331,7 @@ private struct EventsListRoot: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
             .liquidGlassCard(cornerRadius: 12)
-            .padding(.bottom, 12)
+            .padding(.bottom, 8)
         } else if videoAnalyzer.isAnalyzing {
             // UI: clip-scan progress. Events stay hidden until analyzed, so
             // this doubles as "your import is on its way" feedback.
@@ -320,7 +346,7 @@ private struct EventsListRoot: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
             .liquidGlassCard(cornerRadius: 12)
-            .padding(.bottom, 12)
+            .padding(.bottom, 8)
         } else if let message = importFeedback.message {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Text(message)
@@ -338,7 +364,7 @@ private struct EventsListRoot: View {
             .padding(.vertical, 10)
             .frame(maxWidth: 520)
             .liquidGlassCard(cornerRadius: 12)
-            .padding(.bottom, 12)
+            .padding(.bottom, 8)
             // Auto-dismiss after a while; a new import resets the clock
             // because the banner view is re-created for the new message.
             .task(id: message) {
@@ -394,6 +420,11 @@ private struct EventsListRoot: View {
             // whose folder picker won't show an "Open" affordance.
             Button("Can't open the folder? Select files instead…") {
                 presentImportPicker(.files)
+            }
+            .font(.footnote)
+            // BUTTON: empty-state import help (iOS) — reopens the how-to guide.
+            Button("How do I import from a USB drive?") {
+                presentImportInstructions()
             }
             .font(.footnote)
             #else
@@ -515,16 +546,35 @@ private struct EventsListRoot: View {
                 sortMode: $filterState.sortMode
             )
         }
-        EventsImportToolbar { presentImportPicker($0) }
+        EventsImportToolbar(
+            present: { presentImportPicker($0) },
+            showHelp: { presentImportInstructions() }
+        )
     }
 
     // MARK: - Import picker
 
     /// Sets the picker mode before presenting so the shared fileImporter shows
     /// the right panel (folder vs multi-file) for whichever button was tapped.
+    /// On iOS the first-ever import detours through the instructions sheet,
+    /// whose continue button lands back here with the same mode.
     private func presentImportPicker(_ mode: ImportPickerMode) {
+        #if os(iOS)
+        if !hasSeenImportInstructions {
+            hasSeenImportInstructions = true
+            presentImportInstructions(continueMode: mode)
+            return
+        }
+        #endif
         importPickerMode = mode
         showImportPicker = true
+    }
+
+    /// Opens the how-to sheet; its "Continue to import" resumes the picker in
+    /// the given mode via the sheet's onDismiss.
+    private func presentImportInstructions(continueMode: ImportPickerMode = .folder) {
+        instructionsContinueMode = continueMode
+        showImportInstructions = true
     }
 
     // MARK: - Rename

@@ -34,6 +34,18 @@ struct SettingsView: View {
     /// to a tap — App Review flagged the old silent no-op as a bug.
     @State private var summaryNotice: String = ""
     @State private var showSummaryNotice: Bool = false
+    /// Feedback for the incomplete-imports actions. Like the summary button,
+    /// they always respond to a tap: with nothing incomplete, the tap says so
+    /// instead of silently doing nothing.
+    @State private var incompleteNotice: String = ""
+    @State private var showIncompleteNotice: Bool = false
+    /// Incomplete events pending removal; non-empty drives the confirmation.
+    @State private var pendingIncompleteRemoval: [Event] = []
+    /// Migration of legacy drive-referenced clips into app storage. The
+    /// button always responds: with nothing to copy, the tap says so.
+    @State private var isCopyingClips: Bool = false
+    @State private var clipStorageNotice: String = ""
+    @State private var showClipStorageNotice: Bool = false
 
     @AppStorage(ArgusApp.iCloudSyncDefaultsKey)
     private var iCloudSyncEnabled: Bool = false
@@ -94,13 +106,67 @@ struct SettingsView: View {
 
     // MARK: - Library
 
-    // Zone recompute, trip regrouping, and dedupe all happen automatically on
-    // import (and on geofence changes), so the only manual action left is the
-    // full wipe — no section title needed for a single button.
     private var librarySection: some View {
         Section {
-            // BUTTON: wipe everything (events + video records; footage on
-            // disk is untouched). Geofences and watchlist entries are kept.
+            // BUTTON: re-queue incomplete events through the normal
+            // post-import scan + summary pipeline.
+            Button {
+                handleRerunIncompleteTap()
+            } label: {
+                Label("Re-run Analysis on Incomplete Events", systemImage: "arrow.clockwise")
+            }
+            // BUTTON: delete incomplete events (and any clips only they
+            // reference) after confirmation.
+            Button(role: .destructive) {
+                handleRemoveIncompleteTap()
+            } label: {
+                Label("Remove Incomplete Imports…", systemImage: "trash.slash")
+            }
+            .alert("Incomplete Imports", isPresented: $showIncompleteNotice) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(incompleteNotice)
+            }
+            .confirmationDialog(
+                "Remove \(pendingIncompleteRemoval.count) incomplete event\(pendingIncompleteRemoval.count == 1 ? "" : "s")?",
+                isPresented: Binding(
+                    get: { !pendingIncompleteRemoval.isEmpty },
+                    set: { if !$0 { pendingIncompleteRemoval = [] } }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button("Remove Incomplete Imports", role: .destructive) {
+                    EventDeleter.delete(events: pendingIncompleteRemoval, modelContext: modelContext)
+                    pendingIncompleteRemoval = []
+                    refreshCounts()
+                }
+                Button("Cancel", role: .cancel) { pendingIncompleteRemoval = [] }
+            } message: {
+                Text("These events never finished importing — the app quit mid-import or their video clips were never selected. Original files on disk are untouched, so you can import them again.")
+            }
+            // BUTTON: copy legacy drive-referenced clips into app storage so
+            // they keep playing after the drive is unplugged. New imports
+            // are copied automatically; this migrates older libraries.
+            Button {
+                handleCopyClipsTap()
+            } label: {
+                if isCopyingClips {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("Saving clips in the app…")
+                    }
+                } else {
+                    Label("Save Clips in the App", systemImage: "internaldrive")
+                }
+            }
+            .disabled(isCopyingClips)
+            .alert("Video Storage", isPresented: $showClipStorageNotice) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(clipStorageNotice)
+            }
+            // BUTTON: wipe everything (events + video records + the app's
+            // stored clip copies). Geofences and watchlist entries are kept.
             Button("Delete All Videos…", role: .destructive) {
                 confirmDeleteAll = true
             }
@@ -116,9 +182,9 @@ struct SettingsView: View {
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("This removes every video and event from the app. Your geofences, watchlist, and the original video files on disk are kept. This can't be undone.")
+                Text("This removes every video and event from the app, including the app's stored copies of your clips. Geofences, watchlist entries, and the original files on your drive are kept. This can't be undone.")
             }
-            Text("\(eventCount) events · \(videoCount) videos")
+            Text("\(eventCount) events · \(videoCount) videos · \(storedSizeText) saved in the app")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }
@@ -132,6 +198,120 @@ struct SettingsView: View {
     private func refreshCounts() {
         eventCount = (try? modelContext.fetchCount(FetchDescriptor<Event>())) ?? 0
         videoCount = (try? modelContext.fetchCount(FetchDescriptor<VideoRecording>())) ?? 0
+    }
+
+    // MARK: - Incomplete imports
+
+    /// Hide the incomplete events again and feed them back through the same
+    /// scheduler pipeline imports use — scan, summarize, reveal one by one.
+    private func handleRerunIncompleteTap() {
+        let incomplete = IncompleteEventDetector.incompleteEvents(modelContext: modelContext)
+        guard !incomplete.isEmpty else {
+            incompleteNotice = "No incomplete imports found — every event finished analyzing."
+            showIncompleteNotice = true
+            return
+        }
+        // Each event's clips, deduped across events sharing a window.
+        var videos: [VideoRecording] = []
+        var seenIDs: Set<PersistentIdentifier> = []
+        for event in incomplete {
+            let t = event.timestamp
+            let cutoff = EventClipMatcher.earliestClipEnd(for: t)
+            let descriptor = FetchDescriptor<VideoRecording>(
+                predicate: #Predicate<VideoRecording> { v in
+                    v.startTime <= t && v.endTime >= cutoff
+                }
+            )
+            for video in (try? modelContext.fetch(descriptor)) ?? []
+            where seenIDs.insert(video.persistentModelID).inserted {
+                videos.append(video)
+            }
+        }
+        for event in incomplete { event.isPendingAnalysis = true }
+        try? modelContext.save()
+        ImportFollowUpScheduler.shared.importWillStart()
+        ImportFollowUpScheduler.shared.importDidFinish(
+            events: incomplete,
+            videos: videos,
+            modelContext: modelContext
+        )
+        incompleteNotice = "Re-analyzing \(incomplete.count) event\(incomplete.count == 1 ? "" : "s"). Each one reappears in the Events list as soon as it finishes."
+        showIncompleteNotice = true
+    }
+
+    private var storedSizeText: String {
+        ByteCountFormatter.string(fromByteCount: ClipStore.totalBytes(), countStyle: .file)
+    }
+
+    /// Copy every legacy drive-referenced clip into ClipStore. The file
+    /// copies run off the main actor (gigabytes over USB); only Sendable
+    /// bookmark data crosses over, and the model writes happen back here.
+    private func handleCopyClipsTap() {
+        guard !isCopyingClips else { return }
+        let descriptor = FetchDescriptor<VideoRecording>(
+            predicate: #Predicate<VideoRecording> { $0.localFileName == "" }
+        )
+        let legacy = (try? modelContext.fetch(descriptor)) ?? []
+        guard !legacy.isEmpty else {
+            clipStorageNotice = "All your clips are already saved in the app."
+            showClipStorageNotice = true
+            return
+        }
+        struct CopyItem: Sendable {
+            let id: PersistentIdentifier
+            let bookmark: Data
+        }
+        let items = legacy.map { CopyItem(id: $0.persistentModelID, bookmark: $0.bookmark) }
+        isCopyingClips = true
+        Task {
+            // Copy in small chunks, saving filenames after each one, so a
+            // quit mid-run keeps everything copied so far (an all-at-the-end
+            // write-back once orphaned a whole run's worth of files).
+            let chunkSize = 20
+            var savedCount = 0
+            for chunkStart in stride(from: 0, to: items.count, by: chunkSize) {
+                let chunk = Array(items[chunkStart..<min(chunkStart + chunkSize, items.count)])
+                let copied: [(id: PersistentIdentifier, fileName: String)] =
+                    await Task.detached(priority: .utility) {
+                        var out: [(PersistentIdentifier, String)] = []
+                        for item in chunk {
+                            guard let source = BookmarkResolver.resolve(item.bookmark)?.url else {
+                                continue
+                            }
+                            let didAccess = source.startAccessingSecurityScopedResource()
+                            let fileName = try? ClipStore.importCopy(from: source)
+                            if didAccess { source.stopAccessingSecurityScopedResource() }
+                            if let fileName { out.append((item.id, fileName)) }
+                        }
+                        return out
+                    }.value
+                for entry in copied {
+                    if let video = modelContext.model(for: entry.id) as? VideoRecording {
+                        video.localFileName = entry.fileName
+                    }
+                }
+                try? modelContext.save()
+                savedCount += copied.count
+            }
+            isCopyingClips = false
+            let failed = legacy.count - savedCount
+            if failed == 0 {
+                clipStorageNotice = "Saved \(savedCount) clip\(savedCount == 1 ? "" : "s") in the app. Videos now play even with the drive unplugged."
+            } else {
+                clipStorageNotice = "Saved \(savedCount) of \(legacy.count) clips in the app. \(failed) couldn't be read — plug in the drive they were imported from, make sure there's enough free space, and try again."
+            }
+            showClipStorageNotice = true
+        }
+    }
+
+    private func handleRemoveIncompleteTap() {
+        let incomplete = IncompleteEventDetector.incompleteEvents(modelContext: modelContext)
+        if incomplete.isEmpty {
+            incompleteNotice = "No incomplete imports found — every event finished analyzing."
+            showIncompleteNotice = true
+        } else {
+            pendingIncompleteRemoval = incomplete
+        }
     }
 
     // MARK: - AI summaries

@@ -60,6 +60,13 @@ final class Event {
     /// ImportFollowUpScheduler (or its stranded-event rescue at launch).
     var isPendingAnalysis: Bool = false
 
+    /// True when this event never finished its post-import analysis — either
+    /// the app quit mid-import/scan (stranded-event rescue at launch) or no
+    /// clip covering its timestamp was ever imported. Drives the "Incomplete"
+    /// chip and Settings' re-run / remove actions; cleared when a follow-up
+    /// pass completes the event.
+    var analysisIncomplete: Bool = false
+
     init(source: String, camera: String, city: String, estLatitude: String, estLongitude: String, reason: String, timestamp: Date, interestingnessScore: Double = 0, tag: String = "unknown", summary: String = "") {
         self.source = source
         self.camera = camera

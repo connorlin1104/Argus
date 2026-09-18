@@ -78,8 +78,33 @@ class VideoAnalyzer {
             humanPresenceSeconds: presenceSeconds,
             meanHumanMotion: meanMotion,
             score: score,
-            firstPlateText: plates.first?.licensePlateText
+            firstPlateText: verifiedPlateReads(in: detections).first
         )
+    }
+
+    /// Plate reads verified by cross-frame consensus: the same normalized
+    /// text must be read in at least 2 sampled frames before it's trusted
+    /// anywhere (event plateText, watchlist matching, the AI summary).
+    /// Single-frame reads are where OCR garbage comes from — a blurry
+    /// misread or a sticker fragment appears once; a real plate stays on
+    /// screen for seconds and gets read repeatedly. Returns the most common
+    /// raw spelling of each verified plate, most frequent plate first.
+    nonisolated static func verifiedPlateReads(in detections: [Detection]) -> [String] {
+        var groups: [String: [String]] = [:]
+        for d in detections where d.kind == .licensePlate {
+            guard let raw = d.licensePlateText else { continue }
+            let normalized = EventSearchMatcher.normalizePlate(raw)
+            guard !normalized.isEmpty else { continue }
+            groups[normalized, default: []].append(raw)
+        }
+        // TUNING: frames of agreement required before a read counts as real.
+        return groups.values
+            .filter { $0.count >= 2 }
+            .sorted { $0.count > $1.count }
+            .compactMap { reads in
+                Dictionary(grouping: reads, by: { $0 })
+                    .max { $0.value.count < $1.value.count }?.key
+            }
     }
 
     /// Longest continuous stretch a human stayed on screen. First-to-last

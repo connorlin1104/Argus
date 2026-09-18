@@ -126,6 +126,24 @@ struct TagChip: View {
     }
 }
 
+// MARK: - Incomplete chip
+
+/// Shown on events whose import never finished analyzing (app quit mid-scan,
+/// or no clip covering the event was imported). Settings offers re-run and
+/// remove actions for these.
+struct IncompleteChip: View {
+    var body: some View {
+        // TEXT: incomplete-import chip
+        Text("Incomplete")
+            .font(.caption2.bold())
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .foregroundStyle(.orange)
+            .liquidGlassChip(tint: .orange)
+            .help("This event's import didn't finish analyzing. Re-run analysis or remove incomplete imports from Settings.")
+    }
+}
+
 // MARK: - Score badge
 
 /// Interestingness badge. Shows a plain-language activity level instead of

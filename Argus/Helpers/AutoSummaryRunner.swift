@@ -85,9 +85,10 @@ final class AutoSummaryRunner {
     private func matchedVideos(for event: Event,
                                modelContext: ModelContext) -> [VideoRecording] {
         let t = event.timestamp
+        let cutoff = EventClipMatcher.earliestClipEnd(for: t)
         let descriptor = FetchDescriptor<VideoRecording>(
             predicate: #Predicate { video in
-                video.startTime <= t && video.endTime >= t
+                video.startTime <= t && video.endTime >= cutoff
             }
         )
         return (try? modelContext.fetch(descriptor)) ?? []

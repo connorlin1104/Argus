@@ -62,6 +62,12 @@ enum WatchlistMatcher {
         return results
     }
 
+    /// How many of the given events this entry matches (exact or "Possibly").
+    /// Backs the "N matching events" caption on each watchlist row.
+    static func matchCount(entry: Watchlist, events: [Event]) -> Int {
+        events.count { !matches(event: $0, in: [entry]).isEmpty }
+    }
+
     /// The watchlist entry uppercased with formatting stripped, so a user-
     /// typed "8sny-185" compares as "8SNY185".
     private static func canonicalPlate(_ raw: String) -> String {

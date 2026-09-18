@@ -25,12 +25,19 @@ final class VideoRecording {
     /// carrying or had with them.
     var humanContext: String = ""
 
-    init(url: URL, bookmark: Data, camera: String, startTime: Date, endTime: Date) {
+    /// Filename of this clip's app-owned copy in ClipStore. "" for legacy
+    /// rows that still reference the source drive through `bookmark` — those
+    /// only play while the drive is attached.
+    var localFileName: String = ""
+
+    init(url: URL, bookmark: Data, camera: String, startTime: Date, endTime: Date,
+         localFileName: String = "") {
         self.url = url
         self.bookmark = bookmark
         self.camera = camera
         self.startTime = startTime
         self.endTime = endTime
+        self.localFileName = localFileName
     }
 }
 

@@ -114,7 +114,8 @@ struct VideoRow: View {
         // scrolling doesn't hit the (often external) source drive twice.
         guard let cgImage = await ThumbnailCache.thumbnail(
             forPath: video.url.path,
-            bookmark: video.bookmark
+            bookmark: video.bookmark,
+            localFileName: video.localFileName
         ) else {
             // No frame means the clip couldn't be opened — most commonly the
             // file was deleted or its drive is unplugged.

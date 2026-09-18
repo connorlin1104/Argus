@@ -180,19 +180,24 @@ func importEvent(eventJSONURL: URL, videoFiles: [URL]) async -> (event: Event, v
             let durationSeconds = durations[file] ?? 60
             let endTime = startTime.addingTimeInterval(durationSeconds)
 
-            let bookmarkData: Data
+            // Copy the clip into app-owned storage so playback survives the
+            // source drive being unplugged (the normal flow: plug in, import,
+            // SSD goes back in the car). The original URL is kept for
+            // provenance and path-based dedupe; no bookmark is needed for a
+            // clip the app owns. A failed copy (most likely disk full) skips
+            // the clip — the event then carries the Incomplete chip instead
+            // of silently looking playable.
+            let localFileName: String
             do {
-                #if os(iOS)
-                    bookmarkData = try file.bookmarkData()
-                #else
-                    bookmarkData = try file.bookmarkData(options: .withSecurityScope)
-                #endif
+                localFileName = try ClipStore.importCopy(from: file)
             } catch {
-                print("Bookmark creation failed for \(file.lastPathComponent): \(error)")
+                print("Clip copy failed for \(file.lastPathComponent): \(error)")
                 continue
             }
 
-            videos.append(VideoRecording(url: file, bookmark: bookmarkData, camera: cameraName, startTime: startTime, endTime: endTime))
+            videos.append(VideoRecording(url: file, bookmark: Data(), camera: cameraName,
+                                         startTime: startTime, endTime: endTime,
+                                         localFileName: localFileName))
         }
         return (sentryEvent, videos)
     } catch {
