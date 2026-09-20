@@ -22,22 +22,40 @@ enum FilenameParseError: Error, LocalizedError {
 }
 
 
-struct ImportResult {
-    var events: [Event] = []
-    var videos: [VideoRecording] = []
+/// How a folder import pass ended — feeds the finish banner.
+struct ImportRunSummary {
+    var skippedByDateFilter = 0
+    var cancelled = false
 }
 
-func importEvents(url: URL) async -> ImportResult {
-    var result = ImportResult()
+/// Walk the picked folder and stream each event to `onEvent` as soon as it's
+/// read, so the caller can persist incrementally — a cancelled or killed
+/// import keeps everything already delivered. `onProgress` reports
+/// (processed, total) directory counts for the determinate banner.
+func importEvents(
+    url: URL,
+    scope: ImportScope = .everything,
+    onProgress: @MainActor (Int, Int) async -> Void = { _, _ in },
+    onEvent: @MainActor (Event, [VideoRecording]) async -> Void
+) async -> ImportRunSummary {
+    var summary = ImportRunSummary()
+    let directories = eventDirectories(under: url)
+    let kept = directories.filter { ImportDateFilter.shouldImport(directory: $0, scope: scope) }
+    summary.skippedByDateFilter = directories.count - kept.count
 
-    for eventDirectory in eventDirectories(under: url) {
+    await onProgress(0, kept.count)
+    for (index, eventDirectory) in kept.enumerated() {
+        if Task.isCancelled {
+            summary.cancelled = true
+            break
+        }
         let eventURL = eventDirectory.appendingPathComponent("event.json")
         if let (event, videos) = await importEvent(eventURL: eventURL, eventDirectory: eventDirectory) {
-            result.events.append(event)
-            result.videos.append(contentsOf: videos)
+            await onEvent(event, videos)
         }
+        await onProgress(index + 1, kept.count)
     }
-    return result
+    return summary
 }
 
 /// Every directory at or under `root` that holds an event.json, descending a
@@ -67,15 +85,17 @@ private func eventDirectories(under root: URL, depth: Int = 3) -> [URL] {
 /// caller is expected to have picked an `event.json` plus its sibling `.mp4`
 /// clips from a single Tesla event folder; we group by parent directory so
 /// multiple events selected in one picker session still cluster correctly.
-func importEventsFromFiles(urls: [URL]) async -> ImportResult {
-    var result = ImportResult()
-
+func importEventsFromFiles(
+    urls: [URL],
+    onEvent: @MainActor (Event, [VideoRecording]) async -> Void
+) async {
     var grouped: [URL: [URL]] = [:]
     for url in urls {
         grouped[url.deletingLastPathComponent(), default: []].append(url)
     }
 
     for (_, files) in grouped {
+        if Task.isCancelled { break }
         guard let eventJSONURL = files.first(where: { $0.lastPathComponent == "event.json" }) else {
             // No event.json in this group — skip; we don't have enough
             // metadata to construct an Event (camera/city/reason/timestamp).
@@ -83,12 +103,9 @@ func importEventsFromFiles(urls: [URL]) async -> ImportResult {
         }
         let mp4s = files.filter { $0.pathExtension.lowercased() == "mp4" }
         if let (event, videos) = await importEvent(eventJSONURL: eventJSONURL, videoFiles: mp4s) {
-            result.events.append(event)
-            result.videos.append(contentsOf: videos)
+            await onEvent(event, videos)
         }
     }
-
-    return result
 }
 
 func importEvent(eventURL: URL, eventDirectory: URL) async -> (event: Event, videos: [VideoRecording])? {
@@ -172,6 +189,10 @@ func importEvent(eventJSONURL: URL, videoFiles: [URL]) async -> (event: Event, v
 
         var videos: [VideoRecording] = []
         for file in videoFiles {
+            // Cancel responsively: dropping the whole in-progress event (nil
+            // below) is safe — clips already copied stay in ClipStore keyed
+            // by filename, so a re-run reuses them instead of re-copying.
+            if Task.isCancelled { return nil }
             let (parsedStart, cameraName) = parseFilename(file.lastPathComponent)
             guard let startTime = parsedStart else {
                 continue

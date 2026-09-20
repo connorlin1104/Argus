@@ -77,6 +77,14 @@ private struct EventsListRoot: View {
     /// onDismiss so the fileImporter never races the sheet's dismissal.
     @State private var resumePickerAfterInstructions = false
 
+    // === Import scope wizard ===
+    /// Folder the picker returned, held while the scope sheet asks how much
+    /// of it to import. The import itself starts from the sheet's onDismiss.
+    @State private var pendingImportURL: URL? = nil
+    @State private var showImportScope = false
+    /// Range picked in the sheet; nil means the sheet was cancelled.
+    @State private var chosenImportScope: ImportScope? = nil
+
     // === Export state ===
     @State private var exportInProgress: Bool = false
     @State private var exportProgress: Double = 0
@@ -228,7 +236,18 @@ private struct EventsListRoot: View {
                 // navigation bar reserves identical space — otherwise the
                 // search-bar height delta makes the tab bar appear shifted
                 // between empty and populated states.
+                // LAYOUT: explicit navigationBarDrawer placement on iOS. The
+                // iOS 26 default puts the search field in the BOTTOM toolbar
+                // on iPhone; that extra bottom accessory left the tab bar
+                // displaced (icons half off-screen) after switching tabs, and
+                // shifted the Map tab's content down with it.
+                #if os(iOS)
+                .searchable(text: $filterState.searchText,
+                            placement: .navigationBarDrawer,
+                            prompt: "Search city, plate, summary, name…")
+                #else
                 .searchable(text: $filterState.searchText, prompt: "Search city, plate, summary, name…")
+                #endif
                 .toolbar { toolbarContent }
                 // Single fileImporter for both import modes: SwiftUI ignores a
                 // second fileImporter attached to the same view (its binding
@@ -239,17 +258,38 @@ private struct EventsListRoot: View {
                     allowedContentTypes: importPickerMode == .files ? [.movie, .json] : [.folder],
                     allowsMultipleSelection: importPickerMode == .files
                 ) { result in
-                    EventsImportRunner.handlePicked(
-                        result: result,
-                        mode: importPickerMode,
-                        modelContext: modelContext
-                    )
+                    switch importPickerMode {
+                    case .folder:
+                        // Folder picks detour through the scope wizard; the
+                        // import starts from the wizard sheet's onDismiss.
+                        if case .success(let urls) = result, let url = urls.first {
+                            pendingImportURL = url
+                            chosenImportScope = nil
+                            showImportScope = true
+                        }
+                    case .files:
+                        EventsImportRunner.handleFiles(result: result, modelContext: modelContext)
+                    }
                 }
         }
         .environment(\.openEvent, OpenEventAction { event in
             path.append(event)
         })
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .sheet(isPresented: $showImportScope, onDismiss: {
+            // Start the import only after the sheet is fully gone so the
+            // banner (and any refused-second-import message) is visible.
+            if let url = pendingImportURL, let scope = chosenImportScope {
+                EventsImportRunner.beginImport(url: url, scope: scope, modelContext: modelContext)
+            }
+            pendingImportURL = nil
+            chosenImportScope = nil
+        }) {
+            ImportScopeSheet(
+                folderName: pendingImportURL?.lastPathComponent ?? "the folder",
+                onChoose: { scope in chosenImportScope = scope }
+            )
+        }
         .sheet(isPresented: $showImportInstructions, onDismiss: {
             if resumePickerAfterInstructions {
                 resumePickerAfterInstructions = false
@@ -325,8 +365,26 @@ private struct EventsListRoot: View {
     private var importBanner: some View {
         if importFeedback.isImporting {
             HStack(spacing: 10) {
-                ProgressView().controlSize(.small)
-                Text("Importing…") // TEXT: in-flight import banner
+                if importFeedback.totalEvents > 0 {
+                    // UI: determinate progress — one tick per event folder.
+                    // Clip copying happens inside each tick, so the count is
+                    // the honest unit of work.
+                    ProgressView(value: Double(importFeedback.eventsProcessed),
+                                 total: Double(max(1, importFeedback.totalEvents)))
+                        .progressViewStyle(.linear)
+                        .frame(width: 120)
+                    // TEXT: in-flight import banner (counted)
+                    Text("Importing… \(importFeedback.eventsProcessed)/\(importFeedback.totalEvents)")
+                        .font(.callout.monospacedDigit())
+                } else {
+                    ProgressView().controlSize(.small)
+                    Text("Importing…") // TEXT: in-flight import banner (counting)
+                }
+                // BUTTON: cancel import — keeps everything imported so far.
+                Button("Cancel") {
+                    EventsImportRunner.cancelImport()
+                }
+                .buttonStyle(.borderless)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
