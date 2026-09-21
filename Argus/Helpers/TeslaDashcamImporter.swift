@@ -61,8 +61,9 @@ func importEvents(
 /// Every directory at or under `root` that holds an event.json, descending a
 /// few levels so picking TeslaCam, SentryClips, or a single event folder all
 /// import the same way. Depth-limited so a mistaken pick of a huge unrelated
-/// folder doesn't walk the whole drive.
-private func eventDirectories(under root: URL, depth: Int = 3) -> [URL] {
+/// folder doesn't walk the whole drive. Also used by ImportSizeEstimator so
+/// the scope sheet's disk estimate counts exactly what an import would read.
+func eventDirectories(under root: URL, depth: Int = 3) -> [URL] {
     let fileManager = FileManager.default
     if fileManager.fileExists(atPath: root.appendingPathComponent("event.json").path) {
         return [root]

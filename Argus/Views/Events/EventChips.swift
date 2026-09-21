@@ -134,12 +134,15 @@ struct TagChip: View {
 struct IncompleteChip: View {
     var body: some View {
         // TEXT: incomplete-import chip
+        // COLOR: pink, deliberately NOT orange — the "Lingered" tag chip and
+        // map marker are orange, and a status chip must not read as a
+        // behavior tag when both sit on the same row.
         Text("Incomplete")
             .font(.caption2.bold())
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
-            .foregroundStyle(.orange)
-            .liquidGlassChip(tint: .orange)
+            .foregroundStyle(.pink)
+            .liquidGlassChip(tint: .pink)
             .help("This event's import didn't finish analyzing. Re-run analysis or remove incomplete imports from Settings.")
     }
 }

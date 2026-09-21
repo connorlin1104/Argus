@@ -287,6 +287,7 @@ private struct EventsListRoot: View {
         }) {
             ImportScopeSheet(
                 folderName: pendingImportURL?.lastPathComponent ?? "the folder",
+                folderURL: pendingImportURL,
                 onChoose: { scope in chosenImportScope = scope }
             )
         }
@@ -380,6 +381,12 @@ private struct EventsListRoot: View {
                     ProgressView().controlSize(.small)
                     Text("Importing…") // TEXT: in-flight import banner (counting)
                 }
+                if let started = importFeedback.startedAt {
+                    // UI: elapsed clock — ticks on its own via the .timer style.
+                    Text(started, style: .timer)
+                        .font(.callout.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
                 // BUTTON: cancel import — keeps everything imported so far.
                 Button("Cancel") {
                     EventsImportRunner.cancelImport()
@@ -400,6 +407,12 @@ private struct EventsListRoot: View {
                 // TEXT: analyzing banner
                 Text("Analyzing videos… \(videoAnalyzer.completedVideos)/\(videoAnalyzer.totalVideos)")
                     .font(.callout.monospacedDigit())
+                if let started = videoAnalyzer.batchStartedAt {
+                    // UI: elapsed clock — ticks on its own via the .timer style.
+                    Text(started, style: .timer)
+                        .font(.callout.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)

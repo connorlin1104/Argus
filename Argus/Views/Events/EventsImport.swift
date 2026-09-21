@@ -52,12 +52,16 @@ final class ImportFeedback {
     /// Total stays 0 until the folder walk finishes counting.
     var eventsProcessed: Int = 0
     var totalEvents: Int = 0
+    /// When the running import started — drives the elapsed clock in the
+    /// banner. Nil when no import is running.
+    var startedAt: Date? = nil
 
     func begin() {
         isImporting = true
         message = nil
         eventsProcessed = 0
         totalEvents = 0
+        startedAt = Date()
     }
 
     func progress(processed: Int, total: Int) {
@@ -67,6 +71,7 @@ final class ImportFeedback {
 
     func finish(tally: ImportTally, cancelled: Bool = false, skippedByDateFilter: Int = 0) {
         isImporting = false
+        startedAt = nil
         if cancelled {
             // TEXT: cancelled-import banner — partials are kept by design.
             message = "Import stopped — kept \(count(tally.insertedEvents, "event")) imported so far. Import the folder again anytime to pick up the rest."

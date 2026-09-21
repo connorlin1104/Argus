@@ -32,6 +32,9 @@ class VideoAnalyzer {
     var currentTaskLabel: String = ""
     var totalVideos: Int = 0
     var completedVideos: Int = 0
+    /// When the current batch started — drives the elapsed clock in the
+    /// analyzing banner. Nil between batches.
+    var batchStartedAt: Date? = nil
 
     // === TUNING KNOBS ===
     /// Distance (m) at which a human is considered "too close" and gets flagged.
@@ -171,6 +174,7 @@ class VideoAnalyzer {
         completedVideos = 0
         progress = 0
         isAnalyzing = true
+        batchStartedAt = Date()
         currentTaskLabel = "Starting analysis…"
     }
 
@@ -184,6 +188,7 @@ class VideoAnalyzer {
 
     func endBatch() {
         isAnalyzing = false
+        batchStartedAt = nil
         currentTaskLabel = ""
         progress = 0
         totalVideos = 0
