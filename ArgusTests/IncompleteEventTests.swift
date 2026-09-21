@@ -127,4 +127,26 @@ struct IncompleteEventTests {
         #expect(stranded.analysisIncomplete == true)
         #expect(alreadyDone.analysisIncomplete == false)
     }
+
+    @Test func releaseStrandedEventsSparesEventsWithFootage() throws {
+        let container = try makeContainer()
+        let context = container.mainContext
+
+        // Clips copied fine before the session died — only the scan/summary
+        // is missing. Must be revealed WITHOUT the Incomplete chip.
+        let covered = event(timestamp: Self.base.addingTimeInterval(30), pending: true)
+        // No clip anywhere near it — genuinely incomplete.
+        let clipless = event(timestamp: Self.base.addingTimeInterval(10_000), pending: true)
+        context.insert(covered)
+        context.insert(clipless)
+        context.insert(clip(start: Self.base))
+        try context.save()
+
+        ImportFollowUpScheduler.shared.releaseStrandedEvents(modelContext: context)
+
+        #expect(covered.isPendingAnalysis == false)
+        #expect(covered.analysisIncomplete == false)
+        #expect(clipless.isPendingAnalysis == false)
+        #expect(clipless.analysisIncomplete == true)
+    }
 }

@@ -295,6 +295,21 @@ final class ImportSession {
             TripGrouper.regroup(events: allEvents)
         }
 
+        // The user just said stop — don't leave the kept events invisible
+        // until the background scan grinds through them (on a big cancelled
+        // import that made the cancel look like it lost everything until a
+        // relaunch). Reveal them now; the queued follow-up still scans and
+        // summarizes them in place. Only events with no covering footage get
+        // the Incomplete chip.
+        if cancelled {
+            let windows = IncompleteEventDetector.clipWindows(modelContext: modelContext)
+            for event in freshEvents {
+                event.isPendingAnalysis = false
+                event.analysisIncomplete = !IncompleteEventDetector.hasAssociatedVideo(
+                    timestamp: event.timestamp, windows: windows)
+            }
+        }
+
         do {
             try modelContext.save()
         } catch {

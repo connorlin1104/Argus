@@ -166,12 +166,17 @@ final class ImportFollowUpScheduler {
             predicate: #Predicate { $0.isPendingAnalysis == true }
         )
         guard let stranded = try? modelContext.fetch(descriptor), !stranded.isEmpty else { return }
+        let windows = IncompleteEventDetector.clipWindows(modelContext: modelContext)
         for event in stranded {
             event.isPendingAnalysis = false
             // Flag rather than hide — these are exactly the half-imported
-            // events testers hit after killing the app mid-import. The chip
-            // plus Settings' re-run/remove actions make them actionable.
-            event.analysisIncomplete = true
+            // events testers hit after killing the app mid-import. But only
+            // events with no footage covering their timestamp get the chip:
+            // a stranded event whose clips all copied is merely missing its
+            // summary, and an Incomplete chip on playable footage reads as
+            // data loss (tester feedback 2026-09-20).
+            event.analysisIncomplete = !IncompleteEventDetector.hasAssociatedVideo(
+                timestamp: event.timestamp, windows: windows)
         }
         do { try modelContext.save() } catch {
             print("modelContext.save failed: \(error)")
