@@ -40,6 +40,9 @@ struct MainView: View {
         // records saved) are swept here too — before any import can start
         // copying new files.
         .onAppear {
+            #if os(macOS)
+            healOversizedWindows()
+            #endif
             ImportFollowUpScheduler.shared.releaseStrandedEvents(modelContext: modelContext)
             // Never sweep while an import is copying — its files aren't
             // referenced by saved records yet (onAppear can re-fire when a
@@ -53,6 +56,30 @@ struct MainView: View {
             ClipStore.removeOrphans(keeping: referenced)
         }
     }
+
+    #if os(macOS)
+    /// Earlier builds computed a bogus ~1950pt ideal window height from the
+    /// empty-state text (see EventsListView.emptyState) and macOS saved that
+    /// frame — every later launch restored a window whose bottom sat far
+    /// below the screen, pushing content and the map pin down. Shrink any
+    /// restored window that's bigger than its screen back into the visible
+    /// area, keeping its top-left corner where the user expects it.
+    private func healOversizedWindows() {
+        DispatchQueue.main.async {
+            for window in NSApplication.shared.windows {
+                guard let visible = (window.screen ?? NSScreen.main)?.visibleFrame else { continue }
+                var frame = window.frame
+                guard frame.width > visible.width + 1 || frame.height > visible.height + 1 else { continue }
+                let topLeft = CGPoint(x: frame.minX, y: frame.maxY)
+                frame.size.width = min(frame.width, visible.width)
+                frame.size.height = min(frame.height, visible.height)
+                frame.origin = CGPoint(x: max(visible.minX, min(topLeft.x, visible.maxX - frame.width)),
+                                       y: max(visible.minY, min(topLeft.y - frame.height, visible.maxY - frame.height)))
+                window.setFrame(frame, display: true, animate: false)
+            }
+        }
+    }
+    #endif
 }
 
 #Preview {

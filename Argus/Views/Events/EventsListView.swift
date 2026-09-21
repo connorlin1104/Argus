@@ -441,7 +441,6 @@ private struct EventsListRoot: View {
     /// is too small to discover on first launch.
     private var emptyState: some View {
         VStack(spacing: 18) {
-            Spacer(minLength: 0)
             Image(systemName: "tray.and.arrow.down.fill")
                 .font(.system(size: 72))
                 .foregroundStyle(.tint)
@@ -451,7 +450,16 @@ private struct EventsListRoot: View {
             Text("Drop in a Tesla Sentry folder from your USB drive. We'll pull every clip, location, and trigger reason in automatically.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
-                .frame(maxWidth: 480)
+                // LAYOUT: minWidth is load-bearing. When macOS measures the
+                // window's ideal size (first launch, no saved frame), this
+                // text is proposed a degenerate near-zero width; the
+                // fixedSize below then reports the height of a maximally
+                // wrapped one-character column (~1800pt), the window adopts
+                // it, and every launch restores a window taller than the
+                // screen — the "everything pushed down / half-hidden tab
+                // icons / low map pin" bug. The floor keeps the measured
+                // wrap sane; real layouts always offer ≥ 300pt anyway.
+                .frame(minWidth: 300, idealWidth: 480, maxWidth: 480)
                 .padding(.horizontal, 24)
                 // Without this the text truncates to one line ("…locatio…")
                 // instead of wrapping when the window is short.
@@ -501,8 +509,10 @@ private struct EventsListRoot: View {
                 .font(.caption)
                 .foregroundStyle(.tertiary)
             #endif
-            Spacer(minLength: 0)
         }
+        // Centers the hero on its own (default .center alignment) — no
+        // Spacers needed, and Spacers here inflate the ideal-height answer
+        // the macOS window sizes itself by.
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 

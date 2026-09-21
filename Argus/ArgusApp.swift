@@ -110,6 +110,11 @@ struct ArgusApp: App {
             MainView()
                 .preferredColorScheme(appearance.colorScheme)
         }
+        // macOS sizes a first-launch window to the content's *ideal* size,
+        // which layout quirks can blow up to taller-than-the-screen (and the
+        // bad frame then gets saved + restored forever). Pin a sane default;
+        // ignored on iOS.
+        .defaultSize(width: 1100, height: 750)
         .modelContainer(sharedModelContainer)
     }
 }
