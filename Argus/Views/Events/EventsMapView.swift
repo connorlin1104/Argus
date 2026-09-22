@@ -213,6 +213,12 @@ private struct MapEventPopover: View {
                 Text(ScoreBadge.label(for: event.interestingnessScore))
                     .font(.caption)
             }
+            if event.keptOnDevice {
+                // TEXT/ICON: footage saved on this device (Keep on Device)
+                Label("Saved on this device", systemImage: "internaldrive.fill")
+                    .font(.caption)
+                    .foregroundStyle(.green)
+            }
             if !event.summary.isEmpty {
                 Text(event.summary)
                     .font(.caption)

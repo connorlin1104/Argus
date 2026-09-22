@@ -368,8 +368,6 @@ private struct EventsListRoot: View {
             HStack(spacing: 10) {
                 if importFeedback.totalEvents > 0 {
                     // UI: determinate progress — one tick per event folder.
-                    // Clip copying happens inside each tick, so the count is
-                    // the honest unit of work.
                     ProgressView(value: Double(importFeedback.eventsProcessed),
                                  total: Double(max(1, importFeedback.totalEvents)))
                         .progressViewStyle(.linear)
@@ -400,19 +398,26 @@ private struct EventsListRoot: View {
         } else if videoAnalyzer.isAnalyzing {
             // UI: clip-scan progress. Events stay hidden until analyzed, so
             // this doubles as "your import is on its way" feedback.
-            HStack(spacing: 10) {
-                ProgressView(value: videoAnalyzer.progress)
-                    .progressViewStyle(.linear)
-                    .frame(width: 140)
-                // TEXT: analyzing banner
-                Text("Analyzing videos… \(videoAnalyzer.completedVideos)/\(videoAnalyzer.totalVideos)")
-                    .font(.callout.monospacedDigit())
-                if let started = videoAnalyzer.batchStartedAt {
-                    // UI: elapsed clock — ticks on its own via the .timer style.
-                    Text(started, style: .timer)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 10) {
+                    ProgressView(value: videoAnalyzer.progress)
+                        .progressViewStyle(.linear)
+                        .frame(width: 140)
+                    // TEXT: analyzing banner
+                    Text("Analyzing videos… \(videoAnalyzer.completedVideos)/\(videoAnalyzer.totalVideos)")
                         .font(.callout.monospacedDigit())
-                        .foregroundStyle(.secondary)
+                    if let started = videoAnalyzer.batchStartedAt {
+                        // UI: elapsed clock — ticks on its own via the .timer style.
+                        Text(started, style: .timer)
+                            .font(.callout.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
                 }
+                // TEXT: analysis reads clips straight off the drive now that
+                // import doesn't copy them — unplugging mid-scan strands it.
+                Text("Keep the drive plugged in until analysis finishes.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
@@ -602,6 +607,16 @@ private struct EventsListRoot: View {
 
             if selection.isSelecting && !selection.selectedIDs.isEmpty {
                 ToolbarItem {
+                    // BUTTON: bulk Keep on Device — outcome lands in the
+                    // shared banner, so the tap always answers (2.1a).
+                    Button {
+                        runKeepSelected()
+                    } label: {
+                        Label("Keep selected (\(selection.selectedIDs.count))",
+                              systemImage: "square.and.arrow.down.on.square")
+                    }
+                }
+                ToolbarItem {
                     Button {
                         runExport()
                     } label: {
@@ -686,6 +701,35 @@ private struct EventsListRoot: View {
         EventDeleter.delete(events: pendingDeletion, modelContext: modelContext)
         pendingDeletion = []
         selection.clear()
+    }
+
+    // MARK: - Keep on device (bulk)
+
+    /// Copy every selected event's footage into the app. Failures (drive
+    /// unplugged, disk full) are summarized in the banner instead of stopping
+    /// at the first event, so one unreachable clip doesn't sink the batch.
+    private func runKeepSelected() {
+        let selected = selection.resolveSelected(from: events)
+        selection.clear()
+        guard !selected.isEmpty else { return }
+        Task { @MainActor in
+            var kept = 0
+            var failed = 0
+            for event in selected where !event.keptOnDevice {
+                do {
+                    try await EventFootageKeeper.keep(event: event, modelContext: modelContext)
+                    kept += 1
+                } catch {
+                    failed += 1
+                }
+            }
+            let alreadyKept = selected.count - kept - failed
+            // TEXT: bulk-keep result banner
+            var text = "Saved footage for \(kept) event\(kept == 1 ? "" : "s") on this device."
+            if alreadyKept > 0 { text += " \(alreadyKept) already saved." }
+            if failed > 0 { text += " \(failed) couldn't be saved — plug in the drive they came from, check free space, and try again." }
+            ImportFeedback.shared.message = text
+        }
     }
 
     // MARK: - Export

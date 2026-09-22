@@ -70,6 +70,13 @@ struct EventRow: View {
                     .foregroundStyle(.yellow)
                     .font(.caption)
             }
+            if event.keptOnDevice {
+                // ICON: footage saved on this device (Keep on Device)
+                Image(systemName: "internaldrive.fill")
+                    .foregroundStyle(.green)
+                    .font(.caption)
+                    .help("Footage saved on this device")
+            }
             // TEXT: date subhead
             Text(event.timestamp.formatted(date: .abbreviated, time: .shortened))
                 .font(.subheadline)

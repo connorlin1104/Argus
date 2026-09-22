@@ -46,7 +46,7 @@ final class ImportFeedback {
 
     /// Message describing the last finished import; nil once dismissed.
     var message: String? = nil
-    /// True while an import pass is reading folders and copying clips.
+    /// True while an import pass is reading folders and recording references.
     var isImporting: Bool = false
     /// Determinate progress: event directories processed / total in scope.
     /// Total stays 0 until the folder walk finishes counting.
@@ -86,9 +86,9 @@ final class ImportFeedback {
         } else {
             // Imported events stay hidden until analyzed — say so, or the
             // still-empty list makes the import look like it did nothing.
-            // Clips are copied into the app during import, so it's safe to
-            // unplug the drive as soon as this message shows.
-            var text = "Imported \(count(tally.insertedEvents, "event")) with \(count(tally.insertedVideos, "clip")) — you can unplug the drive now. Each event appears once it finishes analyzing."
+            // Footage stays on the drive now, so the message must NOT invite
+            // unplugging: analysis reads the clips over USB.
+            var text = "Imported \(count(tally.insertedEvents, "event")) with \(count(tally.insertedVideos, "clip")). Keep the drive plugged in until analysis finishes — each event appears once it's ready."
             if tally.skippedEvents > 0 {
                 text += " Skipped \(count(tally.skippedEvents, "event")) already imported."
             }
@@ -174,6 +174,7 @@ enum EventsImportRunner {
         ImportFeedback.shared.begin()
         let didAccess = url.startAccessingSecurityScopedResource()
         defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
+        registerImportSource(url: url, modelContext: modelContext)
 
         let session = ImportSession(modelContext: modelContext)
         let summary = await importEvents(
@@ -205,6 +206,29 @@ enum EventsImportRunner {
             session.persist(event: event, videos: videos)
         }
         session.finish(cancelled: Task.isCancelled, modelContext: modelContext)
+    }
+
+    /// Remember (or refresh) the root-folder bookmark for this import so
+    /// clip resolution can fall back to root + relative path when a per-file
+    /// bookmark dies. One row per distinct picked folder, matched by its
+    /// original absolute path; a re-import re-mints the bookmark, healing a
+    /// root whose old bookmark degraded.
+    @MainActor
+    private static func registerImportSource(url: URL, modelContext: ModelContext) {
+        let rootPath = url.path
+        let bookmark = BookmarkResolver.mint(for: url) ?? Data()
+        let descriptor = FetchDescriptor<ImportSource>(
+            predicate: #Predicate<ImportSource> { $0.rootPath == rootPath }
+        )
+        if let existing = ((try? modelContext.fetch(descriptor)) ?? []).first {
+            if !bookmark.isEmpty { existing.bookmark = bookmark }
+            existing.displayName = url.lastPathComponent
+        } else {
+            modelContext.insert(ImportSource(bookmark: bookmark,
+                                             rootPath: rootPath,
+                                             displayName: url.lastPathComponent))
+        }
+        try? modelContext.save()
     }
 
     /// Stable key identifying one physical recording: one car can't record

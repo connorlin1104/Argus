@@ -56,9 +56,9 @@ struct ArgusApp: App {
         let useICloud = UserDefaults.standard.bool(forKey: iCloudSyncDefaultsKey)
         ArgusApp.cloudSyncRequestedAtLaunch = useICloud
 
-        // Event + Geofence + Watchlist are syncable; VideoRecording stays local
-        // because it holds security-scoped URLs and bookmarks that don't
-        // translate across devices.
+        // Event + Geofence + Watchlist are syncable; VideoRecording and
+        // ImportSource stay local because they hold security-scoped URLs and
+        // bookmarks that don't translate across devices.
         let cloudConfig = ModelConfiguration(
             "MetadataStore",
             schema: Schema([Event.self, Geofence.self, Watchlist.self]),
@@ -67,14 +67,14 @@ struct ArgusApp: App {
         )
         let localConfig = ModelConfiguration(
             "VideosStore",
-            schema: Schema([VideoRecording.self]),
+            schema: Schema([VideoRecording.self, ImportSource.self]),
             isStoredInMemoryOnly: false,
             cloudKitDatabase: .none
         )
 
         do {
             let container = try ModelContainer(
-                for: Event.self, Geofence.self, Watchlist.self, VideoRecording.self,
+                for: Event.self, Geofence.self, Watchlist.self, VideoRecording.self, ImportSource.self,
                 configurations: cloudConfig, localConfig
             )
             ArgusApp.cloudSyncActive = useICloud
@@ -90,7 +90,7 @@ struct ArgusApp: App {
             )
             do {
                 return try ModelContainer(
-                    for: Event.self, Geofence.self, Watchlist.self, VideoRecording.self,
+                    for: Event.self, Geofence.self, Watchlist.self, VideoRecording.self, ImportSource.self,
                     configurations: fallbackCloud, localConfig
                 )
             } catch {

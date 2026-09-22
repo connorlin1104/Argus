@@ -9,10 +9,29 @@
 //  bookmark as stale, the fix is to re-create it from the resolved URL right
 //  away — that's the only moment resolution is still guaranteed to work.
 //
+//  Resolution order for a clip: app-owned local copy → the clip's own
+//  bookmark → the import-root fallback (resolve the ImportSource root
+//  bookmark and append the clip's path relative to the original root).
+//  The fallback exists because per-file bookmarks are the first thing to
+//  degrade across drive unplugs; the root bookmark is one sturdy anchor
+//  per import instead of thousands of fragile ones.
+//
 
 import Foundation
+import SwiftData
 
 enum BookmarkResolver {
+
+    /// Mint a security-scoped bookmark for a URL currently readable (its own
+    /// scope, or a parent folder's, must be active). iOS bookmarks carry the
+    /// scope implicitly; macOS needs it requested explicitly.
+    static func mint(for url: URL) -> Data? {
+        #if os(iOS)
+        try? url.bookmarkData()
+        #else
+        try? url.bookmarkData(options: .withSecurityScope)
+        #endif
+    }
 
     struct Resolution {
         let url: URL
@@ -56,16 +75,61 @@ enum BookmarkResolver {
     /// future sessions. The write is picked up by the context's normal save.
     static func resolveURL(for video: VideoRecording) -> URL? {
         // App-owned copies resolve by filename — no bookmark, no drive
-        // needed. A missing copy falls through to the bookmark so a legacy
-        // row (or a manually cleared store) still plays from the source.
+        // needed. A missing copy falls through to the bookmark so a
+        // reference-only row still plays from the source drive.
         if let local = localURL(fileName: video.localFileName) {
             return local
         }
-        guard let resolution = resolve(video.bookmark) else { return nil }
-        if let refreshed = resolution.refreshedBookmark {
-            video.bookmark = refreshed
+        if !video.bookmark.isEmpty, let resolution = resolve(video.bookmark) {
+            if let refreshed = resolution.refreshedBookmark {
+                video.bookmark = refreshed
+            }
+            return resolution.url
         }
-        return resolution.url
+        return rootFallbackURL(for: video)
+    }
+
+    /// Last resort when the clip's own bookmark is gone or dead: resolve each
+    /// ImportSource root bookmark, rebuild the clip's path relative to the
+    /// originally picked root, and check the file is actually there. On
+    /// success the per-file bookmark is re-minted so the next resolution is
+    /// direct again.
+    private static func rootFallbackURL(for video: VideoRecording) -> URL? {
+        guard let context = video.modelContext else { return nil }
+        let sources = (try? context.fetch(FetchDescriptor<ImportSource>())) ?? []
+        for source in sources {
+            guard let root = resolve(source.bookmark) else { continue }
+            if let refreshed = root.refreshedBookmark {
+                source.bookmark = refreshed
+            }
+            guard let candidatePath = fallbackPath(clipPath: video.url.path,
+                                                   rootPath: source.rootPath,
+                                                   resolvedRootPath: root.url.path) else { continue }
+            let didAccess = root.url.startAccessingSecurityScopedResource()
+            defer { if didAccess { root.url.stopAccessingSecurityScopedResource() } }
+            guard FileManager.default.fileExists(atPath: candidatePath) else { continue }
+            let candidate = URL(fileURLWithPath: candidatePath)
+            if let fresh = mint(for: candidate) {
+                video.bookmark = fresh
+            }
+            return candidate
+        }
+        return nil
+    }
+
+    /// Pure path math for the root fallback: the clip's stored absolute path
+    /// minus the original root prefix, appended to wherever the root resolves
+    /// today. Nil when the clip wasn't imported from under this root. The
+    /// prefix check requires a "/" boundary so root "/Volumes/SSD/TeslaCam"
+    /// never claims clips from "/Volumes/SSD/TeslaCamOld".
+    static func fallbackPath(clipPath: String, rootPath: String,
+                             resolvedRootPath: String) -> String? {
+        guard !rootPath.isEmpty else { return nil }
+        let root = rootPath.count > 1 && rootPath.hasSuffix("/")
+            ? String(rootPath.dropLast()) : rootPath
+        if clipPath == root { return resolvedRootPath }
+        guard clipPath.hasPrefix(root + "/") else { return nil }
+        return resolvedRootPath + clipPath.dropFirst(root.count)
     }
 
     /// The ClipStore URL for a stored filename, nil when unset or the file

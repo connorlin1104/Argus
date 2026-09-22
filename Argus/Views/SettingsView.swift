@@ -47,6 +47,9 @@ struct SettingsView: View {
     @State private var clipStorageNotice: String = ""
     @State private var showClipStorageNotice: Bool = false
 
+    /// Unkept-footage cleanup confirmation; non-zero count drives the dialog.
+    @State private var pendingUnkeptCleanupCount: Int = 0
+
     @AppStorage(ArgusApp.iCloudSyncDefaultsKey)
     private var iCloudSyncEnabled: Bool = false
 
@@ -164,6 +167,33 @@ struct SettingsView: View {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text(clipStorageNotice)
+            }
+            // BUTTON: free the space taken by saved copies no kept event
+            // needs (footage saved before Keep existed, or left behind by
+            // partial Keep attempts). Always responds: with nothing to
+            // reclaim, the tap says so.
+            Button {
+                handleRemoveUnkeptTap()
+            } label: {
+                Label("Remove Footage for Unkept Events…", systemImage: "externaldrive.badge.minus")
+            }
+            .confirmationDialog(
+                "Remove saved footage for \(pendingUnkeptCleanupCount) clip\(pendingUnkeptCleanupCount == 1 ? "" : "s")?",
+                isPresented: Binding(
+                    get: { pendingUnkeptCleanupCount > 0 },
+                    set: { if !$0 { pendingUnkeptCleanupCount = 0 } }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button("Remove Saved Footage", role: .destructive) {
+                    let removed = EventFootageKeeper.removeUnkeptFootage(modelContext: modelContext)
+                    pendingUnkeptCleanupCount = 0
+                    clipStorageNotice = "Removed the app's saved copies of \(removed) clip\(removed == 1 ? "" : "s"). Events kept on this device are untouched."
+                    showClipStorageNotice = true
+                }
+                Button("Cancel", role: .cancel) { pendingUnkeptCleanupCount = 0 }
+            } message: {
+                Text("These clips belong to events not marked Keep on Device. Their events stay in the app and play again whenever the source drive is plugged in — if the car hasn't overwritten it. Footage for kept events is never touched.")
             }
             // BUTTON: wipe everything (events + video records + the app's
             // stored clip copies). Geofences and watchlist entries are kept.
@@ -294,6 +324,9 @@ struct SettingsView: View {
                 savedCount += copied.count
             }
             isCopyingClips = false
+            // Events whose footage is now fully copied count as kept, so
+            // Remove/cleanup semantics see them correctly.
+            EventFootageKeeper.backfillKeptFlags(modelContext: modelContext)
             let failed = legacy.count - savedCount
             if failed == 0 {
                 clipStorageNotice = "Saved \(savedCount) clip\(savedCount == 1 ? "" : "s") in the app. Videos now play even with the drive unplugged."
@@ -301,6 +334,16 @@ struct SettingsView: View {
                 clipStorageNotice = "Saved \(savedCount) of \(legacy.count) clips in the app. \(failed) couldn't be read — plug in the drive they were imported from, make sure there's enough free space, and try again."
             }
             showClipStorageNotice = true
+        }
+    }
+
+    private func handleRemoveUnkeptTap() {
+        let candidates = EventFootageKeeper.unkeptLocalClips(modelContext: modelContext)
+        if candidates.isEmpty {
+            clipStorageNotice = "Nothing to remove — every saved clip belongs to an event kept on this device."
+            showClipStorageNotice = true
+        } else {
+            pendingUnkeptCleanupCount = candidates.count
         }
     }
 

@@ -60,6 +60,13 @@ final class Event {
     /// ImportFollowUpScheduler (or its stranded-event rescue at launch).
     var isPendingAnalysis: Bool = false
 
+    /// True when this event's footage has been copied into the app's own
+    /// storage ("Keep on device") so it plays after the source drive is
+    /// unplugged or overwritten by the car. Import itself only references
+    /// clips on the drive; EventFootageKeeper flips this when the user (or
+    /// an auto-keep rule: watchlist match, favoriting) saves the footage.
+    var keptOnDevice: Bool = false
+
     /// True when this event never finished its post-import analysis — either
     /// the app quit mid-import/scan (stranded-event rescue at launch) or no
     /// clip covering its timestamp was ever imported. Drives the "Incomplete"

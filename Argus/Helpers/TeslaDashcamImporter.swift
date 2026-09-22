@@ -191,8 +191,8 @@ func importEvent(eventJSONURL: URL, videoFiles: [URL]) async -> (event: Event, v
         var videos: [VideoRecording] = []
         for file in videoFiles {
             // Cancel responsively: dropping the whole in-progress event (nil
-            // below) is safe — clips already copied stay in ClipStore keyed
-            // by filename, so a re-run reuses them instead of re-copying.
+            // below) is safe — import only records references, so a re-run
+            // just reads the same metadata again.
             if Task.isCancelled { return nil }
             let (parsedStart, cameraName) = parseFilename(file.lastPathComponent)
             guard let startTime = parsedStart else {
@@ -202,24 +202,16 @@ func importEvent(eventJSONURL: URL, videoFiles: [URL]) async -> (event: Event, v
             let durationSeconds = durations[file] ?? 60
             let endTime = startTime.addingTimeInterval(durationSeconds)
 
-            // Copy the clip into app-owned storage so playback survives the
-            // source drive being unplugged (the normal flow: plug in, import,
-            // SSD goes back in the car). The original URL is kept for
-            // provenance and path-based dedupe; no bookmark is needed for a
-            // clip the app owns. A failed copy (most likely disk full) skips
-            // the clip — the event then carries the Incomplete chip instead
-            // of silently looking playable.
-            let localFileName: String
-            do {
-                localFileName = try ClipStore.importCopy(from: file)
-            } catch {
-                print("Clip copy failed for \(file.lastPathComponent): \(error)")
-                continue
-            }
+            // Reference-only import: the clip stays on the drive, found again
+            // through its own bookmark (or the ImportSource root fallback).
+            // Nothing is copied — a 3k-clip SSD imports in seconds and costs
+            // near-zero disk. Footage lands in app storage only when the user
+            // (or an auto-keep rule) Keeps the event; see EventFootageKeeper.
+            let driveBookmark = BookmarkResolver.mint(for: file) ?? Data()
 
-            videos.append(VideoRecording(url: file, bookmark: Data(), camera: cameraName,
+            videos.append(VideoRecording(url: file, bookmark: driveBookmark, camera: cameraName,
                                          startTime: startTime, endTime: endTime,
-                                         localFileName: localFileName))
+                                         localFileName: ""))
         }
         return (sentryEvent, videos)
     } catch {

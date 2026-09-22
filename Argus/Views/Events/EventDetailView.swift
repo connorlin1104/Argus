@@ -60,6 +60,16 @@ struct EventDetailView: View {
     /// Confirmation gate for the toolbar archive/unarchive toggle — easy to
     /// hit by accident next to the favorite star.
     @State private var confirmArchiveToggle: Bool = false
+    /// Keep-on-device state: true while footage is copying into the app.
+    @State private var isKeeping: Bool = false
+    /// Keep failure explanation (drive unplugged, disk full). The button
+    /// always answers a tap (2.1a) — failures alert instead of no-op.
+    @State private var keepNotice: String = ""
+    @State private var showKeepNotice: Bool = false
+    @State private var confirmRemoveFootage: Bool = false
+    /// Size of this event's footage for the Keep row caption; 0 while
+    /// unknown (drive unplugged and nothing saved).
+    @State private var footageBytes: Int64 = 0
 
     /// LAYOUT: drives single-column stacking on iPhone-width screens.
     #if os(iOS)
@@ -261,6 +271,7 @@ struct EventDetailView: View {
 
                 if hasHeader { headerChips }
                 cameraButtonsRows
+                keepFootageRow
                 // No Apple Intelligence → no AI Summary card at all.
                 if EventSummarizer.isAvailable {
                     EventSummarySection(event: event, isGenerating: $isGenerating)
@@ -311,6 +322,7 @@ struct EventDetailView: View {
                 EventSummarySection(event: event, isGenerating: $isGenerating)
             }
             cameraButtonsRows
+            keepFootageRow
             // LAYOUT: Details + mini map share one row. Details flexes to
             // absorb whatever the column's width allows; the map column is a
             // fixed width and its height is pinned to the Details card's
@@ -473,7 +485,7 @@ struct EventDetailView: View {
             ContentUnavailableView(
                 "Video files not found",
                 systemImage: "externaldrive.badge.questionmark",
-                description: Text("This event's clips were imported from a drive that isn't connected right now. Reconnect the drive to play them — then use Settings > Save Clips in the App to keep them on this device. Or remove the event if you no longer need it.")
+                description: Text("This event's footage lives on the drive it was imported from, and that drive isn't connected right now. Plug the drive back in to play it — then tap Keep on Device to store it permanently. Or remove the event if you no longer need it.")
             )
             Button("Remove This Event…", role: .destructive) {
                 confirmRemoveEvent = true
@@ -517,6 +529,105 @@ struct EventDetailView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    // MARK: - Keep on device
+
+    /// UI: Keep/Remove footage row. Import only references clips on the
+    /// drive; this is where the user saves an event's footage into the app
+    /// (or frees it again). Always responds to a tap (2.1a): failures alert
+    /// with the reason instead of silently doing nothing.
+    @ViewBuilder
+    private var keepFootageRow: some View {
+        Group {
+            if event.keptOnDevice {
+                HStack(spacing: 8) {
+                    // TEXT/ICON: kept state
+                    Label("Saved on this device", systemImage: "internaldrive.fill")
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(.green)
+                    if footageBytes > 0 {
+                        Text(ByteCountFormatter.string(fromByteCount: footageBytes, countStyle: .file))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    // BUTTON: remove this event's footage from the app
+                    Button("Remove…", role: .destructive) {
+                        confirmRemoveFootage = true
+                    }
+                    .font(.callout)
+                }
+            } else {
+                // BUTTON: copy this event's footage into the app
+                Button {
+                    keepTapped()
+                } label: {
+                    HStack(spacing: 8) {
+                        if isKeeping {
+                            ProgressView().controlSize(.small)
+                            Text("Saving footage…")
+                        } else {
+                            Label("Keep on Device", systemImage: "square.and.arrow.down")
+                        }
+                        Spacer()
+                        if !isKeeping && footageBytes > 0 {
+                            Text(ByteCountFormatter.string(fromByteCount: footageBytes, countStyle: .file))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .font(.callout.weight(.semibold))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(isKeeping)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.gray.opacity(0.15))
+        )
+        .alert("Keep on Device", isPresented: $showKeepNotice) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(keepNotice)
+        }
+        .confirmationDialog(
+            "Remove this event's footage from this device?",
+            isPresented: $confirmRemoveFootage,
+            titleVisibility: .visible
+        ) {
+            Button("Remove Footage", role: .destructive) {
+                EventFootageKeeper.remove(event: event, modelContext: modelContext)
+                refreshFootageBytes()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The app's saved copies are deleted, except clips another kept event still needs. The event and its details stay; the footage plays again whenever the drive it came from is plugged in — if the car hasn't overwritten it.")
+        }
+        .task(id: event.keptOnDevice) { refreshFootageBytes() }
+    }
+
+    private func keepTapped() {
+        guard !isKeeping else { return }
+        isKeeping = true
+        Task {
+            do {
+                try await EventFootageKeeper.keep(event: event, modelContext: modelContext)
+            } catch {
+                keepNotice = error.localizedDescription
+                showKeepNotice = true
+            }
+            isKeeping = false
+            refreshFootageBytes()
+        }
+    }
+
+    private func refreshFootageBytes() {
+        footageBytes = EventFootageKeeper.footageBytes(for: event, modelContext: modelContext)
+    }
+
     // MARK: - Toolbar
 
     @ToolbarContentBuilder
@@ -525,6 +636,16 @@ struct EventDetailView: View {
         ToolbarItem {
             Button {
                 event.isFavorite.toggle()
+                // Favoriting says "this footage matters" — save it before the
+                // car's rolling buffer overwrites the drive. Best-effort: with
+                // the drive unplugged the star still sticks, and the Keep row
+                // stays available for a manual retry.
+                if event.isFavorite && !event.keptOnDevice {
+                    Task {
+                        try? await EventFootageKeeper.keep(event: event, modelContext: modelContext)
+                        refreshFootageBytes()
+                    }
+                }
             } label: {
                 Image(systemName: event.isFavorite ? "star.fill" : "star")
                     // COLOR: yellow when favorited, secondary otherwise

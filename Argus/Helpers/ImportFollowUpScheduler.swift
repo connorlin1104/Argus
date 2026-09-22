@@ -114,6 +114,7 @@ final class ImportFollowUpScheduler {
         // One batch across all chunks so the Videos-tab progress chip shows
         // overall progress instead of restarting per event.
         let matchedCount = chunks.reduce(0) { $0 + $1.videos.count }
+        let watchlistEntries = (try? modelContext.fetch(FetchDescriptor<Watchlist>())) ?? []
         VideoAnalyzer.shared.beginBatch(total: matchedCount)
         for chunk in chunks {
             if !chunk.videos.isEmpty {
@@ -134,6 +135,14 @@ final class ImportFollowUpScheduler {
                     events: [chunk.event],
                     modelContext: modelContext
                 )
+            }
+            // Auto-keep: a watchlist plate match is exactly the footage the
+            // car's rolling buffer will overwrite — save it while the drive
+            // is (still) plugged in. Best-effort: the scan just read these
+            // clips, so the sources are almost always reachable right now.
+            if !chunk.event.keptOnDevice && !watchlistEntries.isEmpty,
+               !WatchlistMatcher.matches(event: chunk.event, in: watchlistEntries).isEmpty {
+                try? await EventFootageKeeper.keep(event: chunk.event, modelContext: modelContext)
             }
             // Scan + summary done — reveal the event in the list. Saved per
             // chunk so each event appears the moment it's ready instead of

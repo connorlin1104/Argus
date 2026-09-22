@@ -54,7 +54,7 @@ struct ImportScopeSheet: View {
                     }
                 } footer: {
                     // TEXT: scope explainer
-                    Text("Clips are copied into Argus so playback works after the drive is unplugged — importing adds their full size to this device. Events outside the range are skipped without copying their clips, so a smaller range imports much faster on big drives. You can always import the folder again with a wider range.")
+                    Text("Sizes show how much footage each range holds on the drive. Importing only records where the clips live — nothing is copied, so even a full drive imports in moments and takes almost no space. The car reuses the drive and can overwrite old footage, so use Keep on Device to save the events that matter. You can always import the folder again with a wider range.")
                 }
 
                 Section {
@@ -72,7 +72,7 @@ struct ImportScopeSheet: View {
                 } footer: {
                     // TEXT: live estimate for the picked custom window.
                     if let size = sizeLabel(for: .custom(start: customStart, end: customEnd)) {
-                        Text("This range adds about \(size) to this device.")
+                        Text("This range holds about \(size) of footage on the drive.")
                     }
                 }
             }

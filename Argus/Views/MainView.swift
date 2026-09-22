@@ -12,6 +12,11 @@ import SwiftData
 struct MainView: View {
     @Environment(\.modelContext) private var modelContext
 
+    /// One-shot migration: libraries imported before reference-only import
+    /// shipped have every clip copied — mark those events kept so the new
+    /// Keep/Remove semantics see them correctly. Never deletes anything.
+    @AppStorage("didBackfillKeptOnDevice") private var didBackfillKeptOnDevice = false
+
     var body: some View {
         // UI: root TabView holding the four primary tabs.
         // TEXT: change labels here to rename the tabs site-wide.
@@ -44,6 +49,10 @@ struct MainView: View {
             healOversizedWindows()
             #endif
             ImportFollowUpScheduler.shared.releaseStrandedEvents(modelContext: modelContext)
+            if !didBackfillKeptOnDevice {
+                EventFootageKeeper.backfillKeptFlags(modelContext: modelContext)
+                didBackfillKeptOnDevice = true
+            }
             // Never sweep while an import is copying — its files aren't
             // referenced by saved records yet (onAppear can re-fire when a
             // macOS window is closed and reopened mid-import).

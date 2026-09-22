@@ -24,9 +24,26 @@ struct EventRowContextMenu: View {
         // BUTTON: favorite toggle (context menu)
         Button {
             event.isFavorite.toggle()
+            // Favoriting auto-keeps the footage (best-effort — see the same
+            // hook on the detail view's star).
+            if event.isFavorite && !event.keptOnDevice {
+                let context = modelContext
+                Task { try? await EventFootageKeeper.keep(event: event, modelContext: context) }
+            }
         } label: {
             Label(event.isFavorite ? "Unfavorite" : "Favorite",
                   systemImage: event.isFavorite ? "star.slash" : "star")
+        }
+        // BUTTON: keep footage on device (context menu). Best-effort from the
+        // menu — the detail view's Keep row is where failures explain
+        // themselves (drive unplugged, disk full).
+        if !event.keptOnDevice {
+            Button {
+                let context = modelContext
+                Task { try? await EventFootageKeeper.keep(event: event, modelContext: context) }
+            } label: {
+                Label("Keep on Device", systemImage: "square.and.arrow.down")
+            }
         }
         // BUTTON: rename (context menu) — parent presents the rename alert.
         if let onRename {

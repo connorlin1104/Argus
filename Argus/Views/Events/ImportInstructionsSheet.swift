@@ -44,8 +44,8 @@ struct ImportInstructionsSheet: View {
                          title: "No Open button?",
                          detail: "Some drives don't allow folder access. Go back, choose Select Files…, open one event's folder, and select its event.json together with the .mp4 clips.")
                     step(6, symbol: "checkmark.circle",
-                         title: "Unplug when done",
-                         detail: "Imported clips are stored inside the app, so once the import finishes you can unplug the drive and put it back in your car.")
+                         title: "Keep the drive plugged in",
+                         detail: "Footage stays on your drive — importing just catalogs it, so it's fast. Leave the drive connected until analysis finishes, and use Keep on Device to save the events you care about before the car overwrites the drive.")
                 }
                 .padding(16)
                 .liquidGlassCard(cornerRadius: 14)
