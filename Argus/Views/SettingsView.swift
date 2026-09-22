@@ -27,6 +27,10 @@ struct SettingsView: View {
     /// a query materialized every Event each time the Settings tab appeared.
     @State private var eventCount: Int = 0
     @State private var videoCount: Int = 0
+    /// Stored-clip bytes for the footer. @State (not computed inline) so the
+    /// footer refreshes when this view re-appears — Keep/Remove happens on
+    /// other tabs, and a computed label only re-rendered on relaunch.
+    @State private var storedBytes: Int64 = 0
     /// Confirmation gate for the destructive "Delete all events" action.
     @State private var confirmDeleteAll: Bool = false
     /// Alert shown when the summary button can't start a run (model
@@ -188,6 +192,7 @@ struct SettingsView: View {
                 Button("Remove Saved Footage", role: .destructive) {
                     let removed = EventFootageKeeper.removeUnkeptFootage(modelContext: modelContext)
                     pendingUnkeptCleanupCount = 0
+                    refreshCounts()
                     clipStorageNotice = "Removed the app's saved copies of \(removed) clip\(removed == 1 ? "" : "s"). Events kept on this device are untouched."
                     showClipStorageNotice = true
                 }
@@ -228,6 +233,7 @@ struct SettingsView: View {
     private func refreshCounts() {
         eventCount = (try? modelContext.fetchCount(FetchDescriptor<Event>())) ?? 0
         videoCount = (try? modelContext.fetchCount(FetchDescriptor<VideoRecording>())) ?? 0
+        storedBytes = ClipStore.totalBytes()
     }
 
     // MARK: - Incomplete imports
@@ -270,7 +276,7 @@ struct SettingsView: View {
     }
 
     private var storedSizeText: String {
-        ByteCountFormatter.string(fromByteCount: ClipStore.totalBytes(), countStyle: .file)
+        ByteCountFormatter.string(fromByteCount: storedBytes, countStyle: .file)
     }
 
     /// Copy every legacy drive-referenced clip into ClipStore. The file
@@ -327,6 +333,7 @@ struct SettingsView: View {
             // Events whose footage is now fully copied count as kept, so
             // Remove/cleanup semantics see them correctly.
             EventFootageKeeper.backfillKeptFlags(modelContext: modelContext)
+            refreshCounts()
             let failed = legacy.count - savedCount
             if failed == 0 {
                 clipStorageNotice = "Saved \(savedCount) clip\(savedCount == 1 ? "" : "s") in the app. Videos now play even with the drive unplugged."

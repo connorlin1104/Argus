@@ -9,6 +9,7 @@
 
 import SwiftUI
 import AVKit
+import SwiftData
 
 extension SyncedMultiCamPlayerView {
 
@@ -33,6 +34,29 @@ extension SyncedMultiCamPlayerView {
         var byCamera: [String: [VideoRecording]] = [:]
         for video in videos {
             byCamera[TeslaCamera.canonical(video.camera), default: []].append(video)
+        }
+
+        // Widen with continuation clips from the library. The event query
+        // only matches clips covering the trigger timestamp, so a camera
+        // whose neighbors kept recording showed a black tail for footage
+        // that exists one row over in the Videos tab. Any library clip
+        // overlapping the matched clips' union window fills that hole —
+        // only for cameras the event already shows, and clamped to the
+        // window during stitching so the timeline never grows past the
+        // matched footage.
+        let windowStart = videos.map(\.startTime).min() ?? .distantFuture
+        let windowEnd = videos.map(\.endTime).max() ?? .distantPast
+        if windowEnd > windowStart {
+            let descriptor = FetchDescriptor<VideoRecording>(
+                predicate: #Predicate<VideoRecording> { v in
+                    v.startTime < windowEnd && v.endTime > windowStart
+                }
+            )
+            for clip in (try? modelContext.fetch(descriptor)) ?? [] {
+                let cam = TeslaCamera.canonical(clip.camera)
+                guard byCamera[cam] != nil else { continue }
+                byCamera[cam]?.append(clip)
+            }
         }
         var sources: [(cam: String, clips: [(video: VideoRecording, url: URL)])] = []
         for (cam, camVideos) in byCamera {
@@ -80,7 +104,13 @@ extension SyncedMultiCamPlayerView {
             if clips.count == 1 {
                 let asset = AVURLAsset(url: clips[0].url)
                 item = AVPlayerItem(asset: asset)
-                duration = clips[0].video.endTime.timeIntervalSince(camStart)
+                // Duration from the frames that actually exist, not import
+                // metadata — corrupt Sentry tail clips (car powered down
+                // mid-write) claim more time than they hold, and the excess
+                // played as a black tail on every camera.
+                let metaDuration = clips[0].video.endTime.timeIntervalSince(camStart)
+                let playable = await playableDuration(of: asset)?.seconds ?? 0
+                duration = playable > 0.5 ? playable : metaDuration
                 newAssets[camKey] = asset
                 newMarkers[camKey] = clips[0].video.markers
             } else {
@@ -89,13 +119,22 @@ extension SyncedMultiCamPlayerView {
                 let composition = AVMutableComposition()
                 var cursor = CMTime.zero
                 var merged: [DetectionMarker] = []
+                // Never stitch past the matched clips' union window — a
+                // continuation clip pulled from the library above would
+                // otherwise extend this camera past the others and re-create
+                // the black-tail problem it was fetched to fix.
+                let capTime = CMTime(seconds: windowEnd.timeIntervalSince(camStart),
+                                     preferredTimescale: 600)
                 for (video, url) in clips {
-                    let asset = AVURLAsset(url: url)
-                    let assetDuration = (try? await asset.load(.duration))
-                        ?? CMTime(seconds: video.endTime.timeIntervalSince(video.startTime),
-                                  preferredTimescale: 600)
                     let offset = video.startTime.timeIntervalSince(camStart)
                     let target = CMTime(seconds: offset, preferredTimescale: 600)
+                    guard cursor < capTime, target < capTime else { break }
+                    let asset = AVURLAsset(url: url)
+                    // Real playable frames, not import metadata (see the
+                    // single-clip branch above).
+                    let assetDuration = await playableDuration(of: asset)
+                        ?? CMTime(seconds: video.endTime.timeIntervalSince(video.startTime),
+                                  preferredTimescale: 600)
                     if target > cursor {
                         // Recording gap between clips — keep later clips at
                         // their true wall-clock position.
@@ -103,10 +142,12 @@ extension SyncedMultiCamPlayerView {
                         cursor = target
                     }
                     // Clips can overlap the seam by a moment; skip the part
-                    // the previous clip already covered.
+                    // the previous clip already covered. Cap the end so this
+                    // camera stops at the union window.
                     let sourceStart = CMTime(seconds: max(0, cursor.seconds - offset),
                                              preferredTimescale: 600)
-                    let range = CMTimeRange(start: sourceStart, end: assetDuration)
+                    let sourceEnd = min(assetDuration, sourceStart + (capTime - cursor))
+                    let range = CMTimeRange(start: sourceStart, end: sourceEnd)
                     guard range.duration > .zero else { continue }
                     do {
                         try await composition.insertTimeRange(range, of: asset, at: cursor)
@@ -155,6 +196,20 @@ extension SyncedMultiCamPlayerView {
 
         seekAll(to: 0)
         autoPlayAfterSetup()
+    }
+
+    /// Duration of the frames a clip actually holds. Corrupt Sentry tail
+    /// clips (car powered down mid-write) often carry container metadata
+    /// claiming more time than the samples present, which played as a black
+    /// tail; the video track's own time range is the closest cheap proxy for
+    /// real footage. Falls back to the container duration.
+    private func playableDuration(of asset: AVURLAsset) async -> CMTime? {
+        if let track = try? await asset.loadTracks(withMediaType: .video).first,
+           let range = try? await track.load(.timeRange),
+           range.duration > .zero {
+            return range.duration
+        }
+        return try? await asset.load(.duration)
     }
 
     /// Measure each clip's real width:height ratio off its video track.

@@ -25,6 +25,12 @@ struct SyncedMultiCamPlayerView: View {
     /// buttons can live outside the player (e.g. in EventDetailView's left column).
     @Binding var focusedCamera: String?
 
+    /// Used by setupPlayers to pull continuation clips from the library —
+    /// the event query only matches clips covering the trigger timestamp,
+    /// so a camera whose footage continues past the seam needs its next
+    /// minute fetched here. Internal so the +Playback extension can read it.
+    @Environment(\.modelContext) var modelContext
+
     /// LAYOUT: iPhone landscape collapses verticalSizeClass to .compact. We use
     /// this to drop the wallclock badge and cap tile heights so the player fits
     /// inside the (very short) landscape viewport.
