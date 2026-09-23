@@ -17,6 +17,12 @@ struct EventsMapView: View {
     @Query(sort: \Geofence.name) private var fences: [Geofence]
     @State private var selectedEvent: Event?
     @State private var showDensity: Bool = false
+    /// Trip polylines toggle — persisted; lines are cheap and unobtrusive.
+    @AppStorage("mapShowTrips") private var showTrips: Bool = false
+    /// Timeline scrubber toggle — the window itself intentionally resets
+    /// when toggled off (not persisted).
+    @State private var showTimeline: Bool = false
+    @State private var timelineWindow: TimelineWindow?
     /// NAV: typed path so the marker popover can push EventDetailView.
     @State private var path: [Event] = []
     /// Camera binding so tapping a cluster can zoom into it.
@@ -33,11 +39,15 @@ struct EventsMapView: View {
             // UI: full-screen Map with markers (and optional density overlay).
             Map(position: $camera, selection: $selectedEvent) {
                 if showDensity {
-                    densityCircles(events: eventsWithLocation)
+                    densityCircles(events: windowedEvents)
+                }
+                // Trips render before markers so lines sit under the pins.
+                if showTrips {
+                    tripPolylines(events: tripLineEvents)
                 }
                 eventMarkers(
                     clusters: EventClusterer.clusters(
-                        events: eventsWithLocation,
+                        events: windowedEvents,
                         visibleRegion: visibleRegion
                     ),
                     fences: fences,
@@ -77,6 +87,26 @@ struct EventsMapView: View {
                     .padding(12)
                 }
             }
+            // UI: timeline scrubber card — safeAreaInset (not overlay) so it
+            // never covers the tab bar or steals its taps.
+            .safeAreaInset(edge: .bottom) {
+                if showTimeline {
+                    timelineCard
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 8)
+                }
+            }
+            .onChange(of: showTimeline) { _, isOn in
+                // Opening starts at the full span; closing resets the window.
+                timelineWindow = isOn ? fullSpanWindow : nil
+            }
+            // Toggled on while the library was still empty → the card sat in
+            // its empty state; give it a window once events exist.
+            .onChange(of: events.count) { _, _ in
+                if showTimeline && timelineWindow == nil {
+                    timelineWindow = fullSpanWindow
+                }
+            }
             .navigationTitle("Map")
             .navigationDestination(for: Event.self) { event in
                 EventDetailView(event: event)
@@ -86,6 +116,20 @@ struct EventsMapView: View {
                     // BUTTON: density toggle
                     Toggle(isOn: $showDensity) {
                         Label("Density", systemImage: "circle.hexagongrid.fill")
+                    }
+                    .toggleStyle(.button)
+                }
+                ToolbarItem {
+                    // BUTTON: trip lines toggle
+                    Toggle(isOn: $showTrips) {
+                        Label("Trips", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
+                    }
+                    .toggleStyle(.button)
+                }
+                ToolbarItem {
+                    // BUTTON: timeline scrubber toggle
+                    Toggle(isOn: $showTimeline) {
+                        Label("Timeline", systemImage: "clock")
                     }
                     .toggleStyle(.button)
                 }
@@ -102,6 +146,54 @@ struct EventsMapView: View {
 
     private var eventsWithLocation: [Event] {
         events.filter { MarkerStyle.coordinate($0) != nil }
+    }
+
+    /// What the pins/density/clusters actually show: all located events, or
+    /// only those inside the timeline window while the scrubber is on.
+    private var windowedEvents: [Event] {
+        guard showTimeline, let window = timelineWindow else { return eventsWithLocation }
+        return eventsWithLocation.filter { window.contains($0.timestamp) }
+    }
+
+    /// Trips draw whole-line or not at all: a trip appears when ANY of its
+    /// events is inside the window, and then all its points draw — a line cut
+    /// mid-trip would misrepresent the drive.
+    private var tripLineEvents: [Event] {
+        guard showTimeline, let window = timelineWindow else { return eventsWithLocation }
+        let visibleTripIDs = Set(
+            eventsWithLocation
+                .filter { window.contains($0.timestamp) }
+                .compactMap(\.tripID)
+        )
+        return eventsWithLocation.filter {
+            $0.tripID.map(visibleTripIDs.contains) ?? false
+        }
+    }
+
+    private var fullSpanWindow: TimelineWindow? {
+        let stamps = eventsWithLocation.map(\.timestamp)
+        guard let first = stamps.min(), let last = stamps.max() else { return nil }
+        return TimelineWindow(start: first, end: last)
+    }
+
+    @ViewBuilder
+    private var timelineCard: some View {
+        if let windowBinding = Binding($timelineWindow) {
+            EventsMapTimelineCard(
+                events: eventsWithLocation,
+                visibleCount: windowedEvents.count,
+                window: windowBinding
+            )
+        } else {
+            // 2.1a: the toggle always shows something, even with no events.
+            // TEXT: timeline empty state
+            Text("No events to scrub yet — import footage first.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity)
+                .padding(12)
+                .liquidGlassCard(cornerRadius: 14)
+        }
     }
 
     /// Zoom into a tapped cluster so its pins separate. Members at (nearly)
