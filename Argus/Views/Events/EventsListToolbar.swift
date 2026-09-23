@@ -29,6 +29,9 @@ struct EventRowContextMenu: View {
             if event.isFavorite && !event.keptOnDevice {
                 let context = modelContext
                 Task { try? await EventFootageKeeper.keep(event: event, modelContext: context) }
+            } else if !event.isFavorite && event.keptOnDevice {
+                // Symmetric: unstarring takes the save back with it.
+                EventFootageKeeper.remove(event: event, modelContext: modelContext)
             }
         } label: {
             Label(event.isFavorite ? "Unfavorite" : "Favorite",

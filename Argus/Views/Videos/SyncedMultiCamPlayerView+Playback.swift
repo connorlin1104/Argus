@@ -84,6 +84,24 @@ extension SyncedMultiCamPlayerView {
         let earliest = sources.map { $0.clips[0].video.startTime }.min() ?? Date()
         anchor = earliest
 
+        // Decode-verify each camera's FINAL clip up front, concurrently.
+        // Those are the corrupt-tail candidates (car powered down mid-write);
+        // earlier clips are bounded by the next clip's start time during
+        // stitching, so their metadata can't overrun. Concurrent because a
+        // probe costs real decode time and four in a row quadruples the
+        // player's spin-up.
+        var verifiedDurations: [URL: CMTime] = [:]
+        await withTaskGroup(of: (URL, CMTime?).self) { group in
+            for source in sources {
+                guard let last = source.clips.last else { continue }
+                let url = last.url
+                group.addTask { (url, await Self.verifiedPlayableDuration(url: url)) }
+            }
+            for await (url, duration) in group {
+                if let duration { verifiedDurations[url] = duration }
+            }
+        }
+
         var newPlayers: [String: AVPlayer] = [:]
         var newURLs: [String: URL] = [:]
         var newAssets: [String: AVAsset] = [:]
@@ -109,8 +127,9 @@ extension SyncedMultiCamPlayerView {
                 // mid-write) claim more time than they hold, and the excess
                 // played as a black tail on every camera.
                 let metaDuration = clips[0].video.endTime.timeIntervalSince(camStart)
-                let playable = await playableDuration(of: asset)?.seconds ?? 0
+                let playable = verifiedDurations[clips[0].url]?.seconds ?? 0
                 duration = playable > 0.5 ? playable : metaDuration
+                print("MultiCam[\(camKey)]: single clip \(clips[0].url.lastPathComponent) claimed \(metaDuration)s verified \(playable)s")
                 newAssets[camKey] = asset
                 newMarkers[camKey] = clips[0].video.markers
             } else {
@@ -125,28 +144,47 @@ extension SyncedMultiCamPlayerView {
                 // the black-tail problem it was fetched to fix.
                 let capTime = CMTime(seconds: windowEnd.timeIntervalSince(camStart),
                                      preferredTimescale: 600)
-                for (video, url) in clips {
+                for (index, clip) in clips.enumerated() {
+                    let (video, url) = clip
                     let offset = video.startTime.timeIntervalSince(camStart)
                     let target = CMTime(seconds: offset, preferredTimescale: 600)
                     guard cursor < capTime, target < capTime else { break }
                     let asset = AVURLAsset(url: url)
-                    // Real playable frames, not import metadata (see the
-                    // single-clip branch above).
-                    let assetDuration = await playableDuration(of: asset)
-                        ?? CMTime(seconds: video.endTime.timeIntervalSince(video.startTime),
-                                  preferredTimescale: 600)
+                    // Only the final clip carries a decode-verified duration
+                    // (see the probe above); a verified .zero means nothing
+                    // in it decodes, and the empty range below drops it —
+                    // that truncates the timeline instead of scheduling
+                    // undecodable time as a black tail.
+                    let claimedDuration = CMTime(
+                        seconds: video.endTime.timeIntervalSince(video.startTime),
+                        preferredTimescale: 600)
+                    let assetDuration = verifiedDurations[url] ?? claimedDuration
+                    print("MultiCam[\(camKey)]: stitch \(url.lastPathComponent) at +\(offset)s claimed \(claimedDuration.seconds)s verified \(verifiedDurations[url]?.seconds ?? -1)s")
                     if target > cursor {
                         // Recording gap between clips — keep later clips at
                         // their true wall-clock position.
                         composition.insertEmptyTimeRange(CMTimeRange(start: cursor, end: target))
                         cursor = target
                     }
+                    // Stop this clip where the next one starts. Corrupt tail
+                    // clips overstate even their video track's time range, and
+                    // trusting it inserted claimed-but-frameless time that
+                    // shadowed the next clip's real footage — the black tail
+                    // survived exactly where a continuation clip existed to
+                    // fill it.
+                    var insertCap = capTime
+                    if index + 1 < clips.count {
+                        let nextOffset = clips[index + 1].video.startTime
+                            .timeIntervalSince(camStart)
+                        insertCap = min(insertCap,
+                                        CMTime(seconds: nextOffset, preferredTimescale: 600))
+                    }
                     // Clips can overlap the seam by a moment; skip the part
                     // the previous clip already covered. Cap the end so this
-                    // camera stops at the union window.
+                    // camera stops at the union window (or the next clip).
                     let sourceStart = CMTime(seconds: max(0, cursor.seconds - offset),
                                              preferredTimescale: 600)
-                    let sourceEnd = min(assetDuration, sourceStart + (capTime - cursor))
+                    let sourceEnd = min(assetDuration, sourceStart + (insertCap - cursor))
                     let range = CMTimeRange(start: sourceStart, end: sourceEnd)
                     guard range.duration > .zero else { continue }
                     do {
@@ -163,6 +201,7 @@ extension SyncedMultiCamPlayerView {
                 }
                 item = AVPlayerItem(asset: composition)
                 duration = cursor.seconds
+                print("MultiCam[\(camKey)]: stitched \(clips.count) clips, final duration \(duration)s (cap \(capTime.seconds)s)")
                 newAssets[camKey] = composition
                 newMarkers[camKey] = merged
             }
@@ -198,18 +237,83 @@ extension SyncedMultiCamPlayerView {
         autoPlayAfterSetup()
     }
 
-    /// Duration of the frames a clip actually holds. Corrupt Sentry tail
-    /// clips (car powered down mid-write) often carry container metadata
-    /// claiming more time than the samples present, which played as a black
-    /// tail; the video track's own time range is the closest cheap proxy for
-    /// real footage. Falls back to the container duration.
-    private func playableDuration(of asset: AVURLAsset) async -> CMTime? {
-        if let track = try? await asset.loadTracks(withMediaType: .video).first,
-           let range = try? await track.load(.timeRange),
-           range.duration > .zero {
-            return range.duration
+    /// Result of decoding a probe window: where renderable frames actually
+    /// end, that nothing in the window decodes, or that the probe itself
+    /// couldn't run (treat the metadata as innocent then).
+    private enum TailProbe {
+        case verified(CMTime)
+        case nothingDecodable
+        case probeFailed
+    }
+
+    /// Wall-clock duration of footage that actually DECODES from the file.
+    /// Corrupt Sentry tail clips (car powered down mid-write) carry sample
+    /// tables — and even readable bytes — for frames that never render:
+    /// container duration, track time range, and pass-through reads all
+    /// vouched for the lie (FigFilePlayer -12860 at play time was the only
+    /// dissent). Decoding the tail is the same test playback faces, so its
+    /// verdict is authoritative: a shorter verified end truncates the clip,
+    /// nothing decodable drops it entirely (.zero), and a probe that can't
+    /// run falls back to the claimed duration rather than nuking playback.
+    static func verifiedPlayableDuration(url: URL) async -> CMTime? {
+        // The probes run before setupPlayers' own access loop, so hold the
+        // security scope here.
+        let didAccess = url.startAccessingSecurityScopedResource()
+        defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
+        let asset = AVURLAsset(url: url)
+        guard let track = try? await asset.loadTracks(withMediaType: .video).first,
+              let claimed = try? await track.load(.timeRange),
+              claimed.duration.isNumeric, claimed.duration > .zero else {
+            return try? await asset.load(.duration)
         }
-        return try? await asset.load(.duration)
+        // TUNING: tail window the probe decodes. Longer catches truncation
+        // points further from the end but costs decode time (~1s per 10s of
+        // 1080p footage) on every playback setup.
+        let probeWindow = CMTime(seconds: 10, preferredTimescale: 600)
+        let probeStart = max(claimed.start, claimed.end - probeWindow)
+        switch decodedEnd(asset: asset, track: track, from: probeStart) {
+        case .verified(let end):
+            return min(end - claimed.start, claimed.duration)
+        case .nothingDecodable:
+            // Truncated before the tail window — walk from the top for the
+            // real end. A file with nothing decodable anywhere contributes
+            // no footage at all.
+            guard probeStart > claimed.start else { return .zero }
+            switch decodedEnd(asset: asset, track: track, from: claimed.start) {
+            case .verified(let end): return min(end - claimed.start, claimed.duration)
+            case .nothingDecodable: return .zero
+            case .probeFailed: return claimed.duration
+            }
+        case .probeFailed:
+            return claimed.duration
+        }
+    }
+
+    /// End time of the last frame that decodes from `from` onward.
+    private static func decodedEnd(asset: AVURLAsset, track: AVAssetTrack,
+                                   from: CMTime) -> TailProbe {
+        guard let reader = try? AVAssetReader(asset: asset) else { return .probeFailed }
+        let settings: [String: Any] = [
+            kCVPixelBufferPixelFormatTypeKey as String:
+                kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+        ]
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: settings)
+        output.alwaysCopiesSampleData = false
+        guard reader.canAdd(output) else { return .probeFailed }
+        reader.add(output)
+        reader.timeRange = CMTimeRange(start: from, end: .positiveInfinity)
+        guard reader.startReading() else { return .probeFailed }
+        var lastEnd: CMTime?
+        while let buffer = output.copyNextSampleBuffer() {
+            let pts = CMSampleBufferGetPresentationTimeStamp(buffer)
+            guard pts.isNumeric else { continue }
+            let frameDuration = CMSampleBufferGetDuration(buffer)
+            let end = frameDuration.isNumeric ? pts + frameDuration : pts
+            if lastEnd.map({ end > $0 }) ?? true { lastEnd = end }
+        }
+        reader.cancelReading()
+        guard let lastEnd, lastEnd.isNumeric, lastEnd > from else { return .nothingDecodable }
+        return .verified(lastEnd)
     }
 
     /// Measure each clip's real width:height ratio off its video track.

@@ -194,7 +194,11 @@ extension SyncedMultiCamPlayerView {
                 ))
             }
         }
-        return out
+        // Two cameras can log the same kind at the same millisecond, and the
+        // scrubber's ForEach identifies ticks by value — dedupe or SwiftUI
+        // warns about duplicate IDs and renders unpredictably.
+        var seen = Set<EventMarker>()
+        return out.filter { seen.insert($0).inserted }
     }
 
     /// COLOR: marker tick color per detection kind.

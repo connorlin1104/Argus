@@ -17,6 +17,13 @@ import SwiftUI
 import SwiftData
 import CoreLocation
 
+/// Sendable slice of a legacy clip handed to the off-main sizing and copy
+/// work — @Model objects themselves must stay on the main actor.
+private struct ClipCopyItem: Sendable {
+    let id: PersistentIdentifier
+    let bookmark: Data
+}
+
 struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
 
@@ -53,6 +60,24 @@ struct SettingsView: View {
 
     /// Unkept-footage cleanup confirmation; non-zero count drives the dialog.
     @State private var pendingUnkeptCleanupCount: Int = 0
+    /// Bytes that cleanup would free — quoted in the confirmation.
+    @State private var pendingUnkeptCleanupBytes: Int64 = 0
+
+    /// Save-clips confirmation: items and their total size are gathered on
+    /// tap (sizing thousands of files touches the drive, hence the spinner),
+    /// the dialog shows when items land, and the copy starts on confirm.
+    @State private var pendingCopyItems: [ClipCopyItem] = []
+    @State private var pendingCopyBytes: Int64 = 0
+    @State private var isSizingCopy: Bool = false
+
+    /// Targeted plate scan: analyzes only the never-scanned clips covering an
+    /// event. A quit or unplug during the post-import pass leaves events
+    /// without plate reads, so watchlist/search match on nothing — and the
+    /// Videos tab's fix for that is a full-library scan nobody runs on
+    /// thousands of clips.
+    @State private var isPlateScanning: Bool = false
+    @State private var plateScanNotice: String = ""
+    @State private var showPlateScanNotice: Bool = false
 
     @AppStorage(ArgusApp.iCloudSyncDefaultsKey)
     private var iCloudSyncEnabled: Bool = false
@@ -66,8 +91,9 @@ struct SettingsView: View {
                 appearanceSection
                 SettingsGeofenceSection(showPicker: $showPicker)
                 WatchlistSection(showAddSheet: $showAddPlate)
-                librarySection
-                aiSection
+                analysisSection
+                storageSection
+                deleteSection
                 iCloudSection
             }
             .formStyle(.grouped)
@@ -111,10 +137,34 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Library
+    // MARK: - Analysis
 
-    private var librarySection: some View {
-        Section {
+    /// Everything that (re)computes data about the library: plate scans,
+    /// rescuing incomplete imports, and AI summaries. Grouped by what the
+    /// user is trying to do, not by which subsystem runs it.
+    private var analysisSection: some View {
+        Section("Analysis") {
+            // BUTTON: scan event-covering clips that were never analyzed so
+            // plate text lands on events and watchlist/search can match.
+            // Always responds: with nothing to scan, the tap says so.
+            Button {
+                handlePlateScanTap()
+            } label: {
+                if isPlateScanning {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("Scanning event clips…")
+                    }
+                } else {
+                    Label("Scan Event Clips for Plates", systemImage: "text.viewfinder")
+                }
+            }
+            .disabled(isPlateScanning)
+            .alert("Plate Scan", isPresented: $showPlateScanNotice) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(plateScanNotice)
+            }
             // BUTTON: re-queue incomplete events through the normal
             // post-import scan + summary pipeline.
             Button {
@@ -122,38 +172,54 @@ struct SettingsView: View {
             } label: {
                 Label("Re-run Analysis on Incomplete Events", systemImage: "arrow.clockwise")
             }
-            // BUTTON: delete incomplete events (and any clips only they
-            // reference) after confirmation.
-            Button(role: .destructive) {
-                handleRemoveIncompleteTap()
-            } label: {
-                Label("Remove Incomplete Imports…", systemImage: "trash.slash")
-            }
             .alert("Incomplete Imports", isPresented: $showIncompleteNotice) {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text(incompleteNotice)
             }
-            .confirmationDialog(
-                "Remove \(pendingIncompleteRemoval.count) incomplete event\(pendingIncompleteRemoval.count == 1 ? "" : "s")?",
-                isPresented: Binding(
-                    get: { !pendingIncompleteRemoval.isEmpty },
-                    set: { if !$0 { pendingIncompleteRemoval = [] } }
-                ),
-                titleVisibility: .visible
-            ) {
-                Button("Remove Incomplete Imports", role: .destructive) {
-                    EventDeleter.delete(events: pendingIncompleteRemoval, modelContext: modelContext)
-                    pendingIncompleteRemoval = []
-                    refreshCounts()
-                }
-                Button("Cancel", role: .cancel) { pendingIncompleteRemoval = [] }
-            } message: {
-                Text("These events never finished importing — the app quit mid-import or their video clips were never selected. Original files on disk are untouched, so you can import them again.")
+            // BUTTON: backfill summaries for every event without one. Always
+            // visible, even on devices without Apple Intelligence, so the
+            // feature is discoverable rather than looking concealed; when a
+            // run can't start the tap explains why in an alert instead of
+            // silently doing nothing — App Review filed the old inert row
+            // as "app not responsive".
+            Button {
+                handleSummarizeAllTap()
+            } label: {
+                Label("Generate Summaries for All Events", systemImage: "sparkles")
             }
+            .disabled(summaryRunner.isRunning)
+            .alert("On-Device Summaries", isPresented: $showSummaryNotice) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(summaryNotice)
+            }
+            if summaryRunner.isRunning {
+                ProgressView(value: summaryRunner.progress) {
+                    Text(summaryRunner.currentLabel)
+                        .font(.caption.monospacedDigit())
+                }
+                Button("Cancel") { summaryRunner.cancel() }
+                    .buttonStyle(.bordered)
+            } else if let reason = EventSummarizer.unavailabilityExplanation {
+                Text(reason)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    // MARK: - Storage
+
+    /// Everything about where footage lives on this device: saving copies in
+    /// the app and freeing the space they take.
+    private var storageSection: some View {
+        Section {
             // BUTTON: copy legacy drive-referenced clips into app storage so
             // they keep playing after the drive is unplugged. New imports
-            // are copied automatically; this migrates older libraries.
+            // reference the drive; Keep on Device saves per event — this
+            // migrates older libraries wholesale. Tap sizes the copy first,
+            // then a confirmation quotes what it costs.
             Button {
                 handleCopyClipsTap()
             } label: {
@@ -162,15 +228,37 @@ struct SettingsView: View {
                         ProgressView().controlSize(.small)
                         Text("Saving clips in the app…")
                     }
+                } else if isSizingCopy {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("Checking size…")
+                    }
                 } else {
                     Label("Save Clips in the App", systemImage: "internaldrive")
                 }
             }
-            .disabled(isCopyingClips)
+            .disabled(isCopyingClips || isSizingCopy)
             .alert("Video Storage", isPresented: $showClipStorageNotice) {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text(clipStorageNotice)
+            }
+            .confirmationDialog(
+                "Save \(pendingCopyItems.count) clip\(pendingCopyItems.count == 1 ? "" : "s") in the app?",
+                isPresented: Binding(
+                    get: { !pendingCopyItems.isEmpty },
+                    set: { if !$0 { pendingCopyItems = [] } }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button("Save Clips") {
+                    let items = pendingCopyItems
+                    pendingCopyItems = []
+                    startClipCopy(items: items)
+                }
+                Button("Cancel", role: .cancel) { pendingCopyItems = [] }
+            } message: {
+                Text(copyConfirmMessage)
             }
             // BUTTON: free the space taken by saved copies no kept event
             // needs (footage saved before Keep existed, or left behind by
@@ -198,7 +286,44 @@ struct SettingsView: View {
                 }
                 Button("Cancel", role: .cancel) { pendingUnkeptCleanupCount = 0 }
             } message: {
-                Text("These clips belong to events not marked Keep on Device. Their events stay in the app and play again whenever the source drive is plugged in — if the car hasn't overwritten it. Footage for kept events is never touched.")
+                Text("These clips belong to events not marked Keep on Device. Removing them frees about \(ByteCountFormatter.string(fromByteCount: pendingUnkeptCleanupBytes, countStyle: .file)). Their events stay in the app and play again whenever the source drive is plugged in — if the car hasn't overwritten it. Footage for kept events is never touched.")
+            }
+        } header: {
+            Text("Storage")
+        } footer: {
+            Text("\(eventCount) events · \(videoCount) videos · \(storedSizeText) saved in the app")
+        }
+    }
+
+    // MARK: - Delete
+
+    /// Destructive actions, isolated in their own section so nothing sits
+    /// next to a button that removes data.
+    private var deleteSection: some View {
+        Section("Delete Data") {
+            // BUTTON: delete incomplete events (and any clips only they
+            // reference) after confirmation.
+            Button(role: .destructive) {
+                handleRemoveIncompleteTap()
+            } label: {
+                Label("Remove Incomplete Imports…", systemImage: "trash.slash")
+            }
+            .confirmationDialog(
+                "Remove \(pendingIncompleteRemoval.count) incomplete event\(pendingIncompleteRemoval.count == 1 ? "" : "s")?",
+                isPresented: Binding(
+                    get: { !pendingIncompleteRemoval.isEmpty },
+                    set: { if !$0 { pendingIncompleteRemoval = [] } }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button("Remove Incomplete Imports", role: .destructive) {
+                    EventDeleter.delete(events: pendingIncompleteRemoval, modelContext: modelContext)
+                    pendingIncompleteRemoval = []
+                    refreshCounts()
+                }
+                Button("Cancel", role: .cancel) { pendingIncompleteRemoval = [] }
+            } message: {
+                Text("These events never finished importing — the app quit mid-import or their video clips were never selected. Original files on disk are untouched, so you can import them again.")
             }
             // BUTTON: wipe everything (events + video records + the app's
             // stored clip copies). Geofences and watchlist entries are kept.
@@ -219,8 +344,6 @@ struct SettingsView: View {
             } message: {
                 Text("This removes every video and event from the app, including the app's stored copies of your clips. Geofences, watchlist entries, and the original files on your drive are kept. This can't be undone.")
             }
-            Text("\(eventCount) events · \(videoCount) videos · \(storedSizeText) saved in the app")
-                .font(.caption).foregroundStyle(.secondary)
         }
     }
 
@@ -279,11 +402,22 @@ struct SettingsView: View {
         ByteCountFormatter.string(fromByteCount: storedBytes, countStyle: .file)
     }
 
-    /// Copy every legacy drive-referenced clip into ClipStore. The file
-    /// copies run off the main actor (gigabytes over USB); only Sendable
-    /// bookmark data crosses over, and the model writes happen back here.
+    /// TEXT: save-clips confirmation body. Quotes the size when readable;
+    /// with the drive unplugged sizing comes back zero, so say that instead
+    /// of "Zero KB".
+    private var copyConfirmMessage: String {
+        if pendingCopyBytes > 0 {
+            let size = ByteCountFormatter.string(fromByteCount: pendingCopyBytes, countStyle: .file)
+            return "This copies about \(size) from your drive into the app's storage. Clips already saved aren't copied again."
+        }
+        return "The clip sizes couldn't be read — the drive may be unplugged. You can still start, but clips that can't be read are skipped."
+    }
+
+    /// Gather the legacy drive-referenced clips and size them, then present
+    /// the confirmation. Sizing resolves and stats every file, so it runs
+    /// off-main behind a brief spinner.
     private func handleCopyClipsTap() {
-        guard !isCopyingClips else { return }
+        guard !isCopyingClips, !isSizingCopy else { return }
         let descriptor = FetchDescriptor<VideoRecording>(
             predicate: #Predicate<VideoRecording> { $0.localFileName == "" }
         )
@@ -293,11 +427,31 @@ struct SettingsView: View {
             showClipStorageNotice = true
             return
         }
-        struct CopyItem: Sendable {
-            let id: PersistentIdentifier
-            let bookmark: Data
+        let items = legacy.map { ClipCopyItem(id: $0.persistentModelID, bookmark: $0.bookmark) }
+        isSizingCopy = true
+        Task {
+            let bytes = await Task.detached(priority: .userInitiated) { () -> Int64 in
+                var total: Int64 = 0
+                for item in items {
+                    guard let source = BookmarkResolver.resolve(item.bookmark)?.url else { continue }
+                    let didAccess = source.startAccessingSecurityScopedResource()
+                    total += Int64((try? source.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0)
+                    if didAccess { source.stopAccessingSecurityScopedResource() }
+                }
+                return total
+            }.value
+            isSizingCopy = false
+            pendingCopyBytes = bytes
+            pendingCopyItems = items
         }
-        let items = legacy.map { CopyItem(id: $0.persistentModelID, bookmark: $0.bookmark) }
+    }
+
+    /// Copy every legacy drive-referenced clip into ClipStore, once the user
+    /// confirms the size. The file copies run off the main actor (gigabytes
+    /// over USB); only Sendable bookmark data crosses over, and the model
+    /// writes happen back here.
+    private func startClipCopy(items: [ClipCopyItem]) {
+        guard !isCopyingClips else { return }
         isCopyingClips = true
         Task {
             // Copy in small chunks, saving filenames after each one, so a
@@ -334,13 +488,65 @@ struct SettingsView: View {
             // Remove/cleanup semantics see them correctly.
             EventFootageKeeper.backfillKeptFlags(modelContext: modelContext)
             refreshCounts()
-            let failed = legacy.count - savedCount
+            let failed = items.count - savedCount
             if failed == 0 {
                 clipStorageNotice = "Saved \(savedCount) clip\(savedCount == 1 ? "" : "s") in the app. Videos now play even with the drive unplugged."
             } else {
-                clipStorageNotice = "Saved \(savedCount) of \(legacy.count) clips in the app. \(failed) couldn't be read — plug in the drive they were imported from, make sure there's enough free space, and try again."
+                clipStorageNotice = "Saved \(savedCount) of \(items.count) clips in the app. \(failed) couldn't be read — plug in the drive they were imported from, make sure there's enough free space, and try again."
             }
             showClipStorageNotice = true
+        }
+    }
+
+    /// Scan only the clips that cover an event and were never analyzed. A
+    /// scanned clip always has non-empty markersJSON (an empty result encodes
+    /// as "[]"), so `== ""` means the analyzer never touched it.
+    private func handlePlateScanTap() {
+        guard !isPlateScanning else { return }
+        guard !VideoAnalyzer.shared.isAnalyzing else {
+            plateScanNotice = "A video scan is already running — check the Videos tab for its progress."
+            showPlateScanNotice = true
+            return
+        }
+        let descriptor = FetchDescriptor<VideoRecording>(
+            // `== ""` rather than .isEmpty — SwiftData mistranslates .isEmpty
+            // on stored strings and the clause silently matches nothing.
+            predicate: #Predicate<VideoRecording> { $0.markersJSON == "" }
+        )
+        let unscanned = (try? modelContext.fetch(descriptor)) ?? []
+        let timestamps = fetchAllEvents().map(\.timestamp)
+        let clips = unscanned.filter { clip in
+            timestamps.contains {
+                EventClipMatcher.covers(start: clip.startTime, end: clip.endTime, timestamp: $0)
+            }
+        }
+        guard !clips.isEmpty else {
+            plateScanNotice = "Every clip covering an event has already been scanned. If a plate still isn't matching, its footage may not show a readable plate."
+            showPlateScanNotice = true
+            return
+        }
+        isPlateScanning = true
+        plateScanNotice = "Scanning \(clips.count) clip\(clips.count == 1 ? "" : "s") for plates and activity. Keep the drive plugged in — progress shows in the Videos tab."
+        showPlateScanNotice = true
+        Task {
+            await VideoAnalysisRunner.runAnalysis(
+                videos: clips,
+                analyzer: VideoAnalyzer.shared,
+                modelContext: modelContext
+            )
+            // Fresh plate reads can turn events into watchlist matches — save
+            // their footage while the drive is (probably still) plugged in,
+            // same rule as the post-import pass.
+            let entries = (try? modelContext.fetch(FetchDescriptor<Watchlist>())) ?? []
+            if !entries.isEmpty {
+                for event in fetchAllEvents()
+                where !event.keptOnDevice
+                    && !WatchlistMatcher.matches(event: event, in: entries).isEmpty {
+                    try? await EventFootageKeeper.keep(event: event, modelContext: modelContext)
+                }
+            }
+            isPlateScanning = false
+            refreshCounts()
         }
     }
 
@@ -350,6 +556,11 @@ struct SettingsView: View {
             clipStorageNotice = "Nothing to remove — every saved clip belongs to an event kept on this device."
             showClipStorageNotice = true
         } else {
+            // Local files, so sizing them is cheap enough for the tap.
+            pendingUnkeptCleanupBytes = candidates.reduce(Int64(0)) { sum, clip in
+                guard let url = BookmarkResolver.localURL(fileName: clip.localFileName) else { return sum }
+                return sum + Int64((try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0)
+            }
             pendingUnkeptCleanupCount = candidates.count
         }
     }
@@ -365,42 +576,6 @@ struct SettingsView: View {
     }
 
     // MARK: - AI summaries
-
-    // Always visible, even on devices without Apple Intelligence, so the
-    // feature is discoverable rather than looking concealed. The button is
-    // always tappable: when a run can't start (model unavailable, nothing
-    // to summarize) the tap explains why in an alert instead of silently
-    // doing nothing — App Review filed the old inert row as "app not
-    // responsive".
-    private var aiSection: some View {
-        Section("On-device summaries") {
-            // BUTTON: backfill summaries for every event without one
-            Button {
-                handleSummarizeAllTap()
-            } label: {
-                Label("Generate summaries for all events", systemImage: "sparkles")
-            }
-            .disabled(summaryRunner.isRunning)
-            .alert("On-Device Summaries", isPresented: $showSummaryNotice) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text(summaryNotice)
-            }
-
-            if summaryRunner.isRunning {
-                ProgressView(value: summaryRunner.progress) {
-                    Text(summaryRunner.currentLabel)
-                        .font(.caption.monospacedDigit())
-                }
-                Button("Cancel") { summaryRunner.cancel() }
-                    .buttonStyle(.bordered)
-            } else if let reason = EventSummarizer.unavailabilityExplanation {
-                Text(reason)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
 
     private func handleSummarizeAllTap() {
         if let reason = EventSummarizer.unavailabilityExplanation {

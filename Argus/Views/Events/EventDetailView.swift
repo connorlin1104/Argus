@@ -645,6 +645,11 @@ struct EventDetailView: View {
                         try? await EventFootageKeeper.keep(event: event, modelContext: modelContext)
                         refreshFootageBytes()
                     }
+                } else if !event.isFavorite && event.keptOnDevice {
+                    // Symmetric: unstarring takes the save back with it. Clips
+                    // another kept event still covers survive the removal.
+                    EventFootageKeeper.remove(event: event, modelContext: modelContext)
+                    refreshFootageBytes()
                 }
             } label: {
                 Image(systemName: event.isFavorite ? "star.fill" : "star")
