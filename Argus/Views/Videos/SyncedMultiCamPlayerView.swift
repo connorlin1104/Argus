@@ -73,6 +73,10 @@ struct SyncedMultiCamPlayerView: View {
     /// per camera, and drawing all of them overlaid two clips' worth of ticks
     /// on one timeline.
     @State var markersByCamera: [String: [DetectionMarker]] = [:]
+    /// Notification tokens for per-item error observers — console-only
+    /// diagnostics that attribute decode failures to a camera and file.
+    /// Removed in tearDown.
+    @State var playbackErrorObservers: [NSObjectProtocol] = []
 
     /// LAYOUT: Canonical camera display order. Only cameras present in `videos` show up.
     let preferredCameraOrder: [String] = ["front", "left_repeater", "right_repeater", "back"]

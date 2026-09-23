@@ -84,18 +84,20 @@ extension SyncedMultiCamPlayerView {
         let earliest = sources.map { $0.clips[0].video.startTime }.min() ?? Date()
         anchor = earliest
 
-        // Decode-verify each camera's FINAL clip up front, concurrently.
-        // Those are the corrupt-tail candidates (car powered down mid-write);
-        // earlier clips are bounded by the next clip's start time during
-        // stitching, so their metadata can't overrun. Concurrent because a
-        // probe costs real decode time and four in a row quadruples the
-        // player's spin-up.
+        // Decode-verify every clip up front, concurrently: how much of each
+        // file actually DECODES. Corrupt Sentry tails (car powered down
+        // mid-write) can claim more time than they hold, and scheduling
+        // undecodable time would play as a black tail. Each probe only
+        // decodes a clip's last ~10s and they run concurrently, so spin-up
+        // stays bounded.
         var verifiedDurations: [URL: CMTime] = [:]
         await withTaskGroup(of: (URL, CMTime?).self) { group in
+            var queued = Set<URL>()
             for source in sources {
-                guard let last = source.clips.last else { continue }
-                let url = last.url
-                group.addTask { (url, await Self.verifiedPlayableDuration(url: url)) }
+                for clip in source.clips where queued.insert(clip.url).inserted {
+                    let url = clip.url
+                    group.addTask { (url, await Self.verifiedPlayableDuration(url: url)) }
+                }
             }
             for await (url, duration) in group {
                 if let duration { verifiedDurations[url] = duration }
@@ -103,6 +105,7 @@ extension SyncedMultiCamPlayerView {
         }
 
         var newPlayers: [String: AVPlayer] = [:]
+        var newErrorObservers: [NSObjectProtocol] = []
         var newURLs: [String: URL] = [:]
         var newAssets: [String: AVAsset] = [:]
         var newAccessed: [URL] = []
@@ -138,6 +141,9 @@ extension SyncedMultiCamPlayerView {
                 let composition = AVMutableComposition()
                 var cursor = CMTime.zero
                 var merged: [DetectionMarker] = []
+                // Last successfully inserted clip + where in its source time
+                // the insert stopped — the gap filler below holds that frame.
+                var lastInserted: (asset: AVURLAsset, sourceEnd: CMTime)?
                 // Never stitch past the matched clips' union window — a
                 // continuation clip pulled from the library above would
                 // otherwise extend this camera past the others and re-create
@@ -150,9 +156,9 @@ extension SyncedMultiCamPlayerView {
                     let target = CMTime(seconds: offset, preferredTimescale: 600)
                     guard cursor < capTime, target < capTime else { break }
                     let asset = AVURLAsset(url: url)
-                    // Only the final clip carries a decode-verified duration
-                    // (see the probe above); a verified .zero means nothing
-                    // in it decodes, and the empty range below drops it —
+                    // Every clip carries a decode-verified duration (see the
+                    // probe above); a verified .zero means nothing in it
+                    // decodes, and the empty-range guard below drops it —
                     // that truncates the timeline instead of scheduling
                     // undecodable time as a black tail.
                     let claimedDuration = CMTime(
@@ -161,9 +167,14 @@ extension SyncedMultiCamPlayerView {
                     let assetDuration = verifiedDurations[url] ?? claimedDuration
                     print("MultiCam[\(camKey)]: stitch \(url.lastPathComponent) at +\(offset)s claimed \(claimedDuration.seconds)s verified \(verifiedDurations[url]?.seconds ?? -1)s")
                     if target > cursor {
-                        // Recording gap between clips — keep later clips at
-                        // their true wall-clock position.
-                        composition.insertEmptyTimeRange(CMTimeRange(start: cursor, end: target))
+                        // Recording gap between clips (this car routinely
+                        // leaves ~2s between minute files) — keep later clips
+                        // at their true wall-clock position and hold the
+                        // previous clip's last frame across the hole. A
+                        // frozen frame reads better than the dead black an
+                        // empty video range shows.
+                        await Self.fillGap(in: composition, from: cursor,
+                                           to: target, holding: lastInserted)
                         cursor = target
                     }
                     // Stop this clip where the next one starts. Corrupt tail
@@ -194,17 +205,43 @@ extension SyncedMultiCamPlayerView {
                         continue
                     }
                     cursor = cursor + range.duration
+                    lastInserted = (asset, sourceEnd)
                     let shiftMs = Int(offset * 1000)
                     merged.append(contentsOf: video.markers.map {
                         DetectionMarker(kind: $0.kind, timestampMs: $0.timestampMs + shiftMs)
                     })
                 }
                 item = AVPlayerItem(asset: composition)
+                // THE black-tail fix. AVPlayer silently renders NOTHING for
+                // composition segments sourced from a different file than
+                // the first segment (FigFilePlayer -12860; time advances,
+                // video output stops). Reproduced with pristine files, so
+                // it's an OS playback regression, not Tesla corruption — a
+                // video composition routes rendering through the compositor,
+                // which handles cross-file segments correctly.
+                item.videoComposition = try? await AVMutableVideoComposition
+                    .videoComposition(withPropertiesOf: composition)
                 duration = cursor.seconds
                 print("MultiCam[\(camKey)]: stitched \(clips.count) clips, final duration \(duration)s (cap \(capTime.seconds)s)")
                 newAssets[camKey] = composition
                 newMarkers[camKey] = merged
             }
+
+            // Diagnostics: mirror the player's own error log to the console
+            // with camera + file attribution. FigFilePlayer prints anonymous
+            // "err=-12860" lines; these say which clip it rejected and why.
+            newErrorObservers.append(NotificationCenter.default.addObserver(
+                forName: AVPlayerItem.newErrorLogEntryNotification,
+                object: item, queue: .main) { [weak item] _ in
+                    guard let entry = item?.errorLog()?.events.last else { return }
+                    print("MultiCam[\(camKey)]: player error \(entry.errorStatusCode) \(entry.errorComment ?? "-") uri=\(entry.uri ?? "-")")
+            })
+            newErrorObservers.append(NotificationCenter.default.addObserver(
+                forName: AVPlayerItem.failedToPlayToEndTimeNotification,
+                object: item, queue: .main) { note in
+                    let error = note.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? NSError
+                    print("MultiCam[\(camKey)]: failed to play to end: \(error?.localizedDescription ?? "unknown") (code \(error?.code ?? 0))")
+            })
 
             let player = AVPlayer(playerItem: item)
             player.actionAtItemEnd = .pause
@@ -219,6 +256,7 @@ extension SyncedMultiCamPlayerView {
         }
 
         players = newPlayers
+        playbackErrorObservers = newErrorObservers
         resolvedURLs = newURLs
         assetsByCamera = newAssets
         accessedURLs = newAccessed
@@ -237,6 +275,46 @@ extension SyncedMultiCamPlayerView {
         autoPlayAfterSetup()
     }
 
+    /// Fill a recording gap in a stitched composition by holding the
+    /// previous clip's last decode-verified frame, time-stretched across
+    /// the hole — a frozen frame reads better than the dead black an empty
+    /// video range shows. Audio tracks (if the clips carry any) get a plain
+    /// empty range, which players handle as silence without complaint.
+    /// Falls back to an empty range when there's no previous frame to hold
+    /// (gap before the first clip).
+    private static func fillGap(in composition: AVMutableComposition,
+                                from cursor: CMTime, to target: CMTime,
+                                holding last: (asset: AVURLAsset, sourceEnd: CMTime)?) async {
+        let gap = CMTimeRange(start: cursor, end: target)
+        guard let last,
+              let sourceTrack = try? await last.asset.loadTracks(withMediaType: .video).first,
+              let videoTrack = composition.tracks(withMediaType: .video).first else {
+            composition.insertEmptyTimeRange(gap)
+            return
+        }
+        // TUNING: source slice held across the gap — one frame's worth, so
+        // the stretch is a clean freeze. At 0.1s the ~3 stretched frames
+        // read as a jitter right at the seam.
+        let holdWindow = CMTime(seconds: 1.0 / 30.0, preferredTimescale: 600)
+        let fillStart = max(.zero, last.sourceEnd - holdWindow)
+        let fill = CMTimeRange(start: fillStart, end: last.sourceEnd)
+        guard fill.duration > .zero else {
+            composition.insertEmptyTimeRange(gap)
+            return
+        }
+        do {
+            try videoTrack.insertTimeRange(fill, of: sourceTrack, at: cursor)
+            videoTrack.scaleTimeRange(CMTimeRange(start: cursor, duration: fill.duration),
+                                      toDuration: gap.duration)
+            for track in composition.tracks where track.mediaType != .video {
+                track.insertEmptyTimeRange(gap)
+            }
+        } catch {
+            print("SyncedMultiCamPlayerView: gap fill failed: \(error)")
+            composition.insertEmptyTimeRange(gap)
+        }
+    }
+
     /// Result of decoding a probe window: where renderable frames actually
     /// end, that nothing in the window decodes, or that the probe itself
     /// couldn't run (treat the metadata as innocent then).
@@ -247,14 +325,12 @@ extension SyncedMultiCamPlayerView {
     }
 
     /// Wall-clock duration of footage that actually DECODES from the file.
-    /// Corrupt Sentry tail clips (car powered down mid-write) carry sample
-    /// tables — and even readable bytes — for frames that never render:
-    /// container duration, track time range, and pass-through reads all
-    /// vouched for the lie (FigFilePlayer -12860 at play time was the only
-    /// dissent). Decoding the tail is the same test playback faces, so its
-    /// verdict is authoritative: a shorter verified end truncates the clip,
-    /// nothing decodable drops it entirely (.zero), and a probe that can't
-    /// run falls back to the claimed duration rather than nuking playback.
+    /// Corrupt Sentry tail clips (car powered down mid-write) can carry
+    /// sample tables for frames that never render, and container duration /
+    /// track time range vouch for the lie. Decoding the tail is the honest
+    /// test: a shorter verified end truncates the clip, nothing decodable
+    /// drops it entirely (.zero), and a probe that can't run falls back to
+    /// the claimed duration rather than nuking playback.
     static func verifiedPlayableDuration(url: URL) async -> CMTime? {
         // The probes run before setupPlayers' own access loop, so hold the
         // security scope here.
@@ -293,11 +369,10 @@ extension SyncedMultiCamPlayerView {
     private static func decodedEnd(asset: AVURLAsset, track: AVAssetTrack,
                                    from: CMTime) -> TailProbe {
         guard let reader = try? AVAssetReader(asset: asset) else { return .probeFailed }
-        let settings: [String: Any] = [
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: [
             kCVPixelBufferPixelFormatTypeKey as String:
                 kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
-        ]
-        let output = AVAssetReaderTrackOutput(track: track, outputSettings: settings)
+        ])
         output.alwaysCopiesSampleData = false
         guard reader.canAdd(output) else { return .probeFailed }
         reader.add(output)
@@ -359,6 +434,8 @@ extension SyncedMultiCamPlayerView {
             primary.removeTimeObserver(token)
         }
         timeObserverToken = nil
+        for token in playbackErrorObservers { NotificationCenter.default.removeObserver(token) }
+        playbackErrorObservers.removeAll()
         for (_, player) in players { player.pause() }
         for url in accessedURLs { url.stopAccessingSecurityScopedResource() }
         players.removeAll()

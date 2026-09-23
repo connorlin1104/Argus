@@ -43,6 +43,13 @@ extension SyncedMultiCamPlayerView {
             asset: asset,
             presetName: AVAssetExportPresetHighestQuality
         ) else { return }
+        // Stitched compositions need a video composition or segments from
+        // a second source file render as nothing (same OS bug the player
+        // hit — see setupPlayers). Harmless for single-segment cases.
+        if asset is AVComposition {
+            exporter.videoComposition = try? await AVMutableVideoComposition
+                .videoComposition(withPropertiesOf: asset)
+        }
         exporter.timeRange = CMTimeRange(
             start: CMTime(seconds: startLocal, preferredTimescale: 600),
             end: CMTime(seconds: endLocal, preferredTimescale: 600)
