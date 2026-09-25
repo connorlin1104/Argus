@@ -76,6 +76,41 @@ struct TripPolylineTests {
         #expect(TripPolylineBuilder.tripLines(events: events).isEmpty)
     }
 
+    @Test func parkedTripAtOneSpotDrawsNothing() {
+        // A Sentry session: many events, all at the same parking spot.
+        let trip = UUID()
+        let events = (0..<5).map { index in
+            event(lat: "30.000000", lon: "-97.000000",
+                  offset: TimeInterval(index * 60), tripID: trip)
+        }
+        #expect(TripPolylineBuilder.tripLines(events: events).isEmpty)
+    }
+
+    @Test func loopTripKeepsReturnToStart() {
+        // A → B → back to A: consecutive-only dedupe must keep all 3 points.
+        let trip = UUID()
+        let events = [
+            event(lat: "30.00", lon: "-97.00", offset: 0, tripID: trip),
+            event(lat: "30.01", lon: "-97.01", offset: 60, tripID: trip),
+            event(lat: "30.00", lon: "-97.00", offset: 120, tripID: trip),
+        ]
+        let lines = TripPolylineBuilder.tripLines(events: events)
+        #expect(lines.count == 1)
+        #expect(lines[0].coordinates.count == 3)
+    }
+
+    @Test func consecutiveDuplicatesCollapseButDistinctStopsSurvive() {
+        let trip = UUID()
+        let events = [
+            event(lat: "30.00", lon: "-97.00", offset: 0, tripID: trip),
+            event(lat: "30.00003", lon: "-97.00003", offset: 30, tripID: trip), // ~4 m away
+            event(lat: "30.01", lon: "-97.01", offset: 60, tripID: trip),
+        ]
+        let lines = TripPolylineBuilder.tripLines(events: events)
+        #expect(lines.count == 1)
+        #expect(lines[0].coordinates.count == 2)
+    }
+
     @Test func segmentOpacityRampsTowardTripEnd() {
         let trip = UUID()
         let events = [

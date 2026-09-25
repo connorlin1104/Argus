@@ -37,13 +37,13 @@ struct EventsMapView: View {
     var body: some View {
         NavigationStack(path: $path) {
             // UI: full-screen Map with markers (and optional density overlay).
-            Map(position: $camera, selection: $selectedEvent) {
+            Map(position: $camera) {
                 if showDensity {
                     densityCircles(events: windowedEvents)
                 }
                 // Trips render before markers so lines sit under the pins.
                 if showTrips {
-                    tripPolylines(events: tripLineEvents)
+                    tripPolylines(lines: tripLines)
                 }
                 eventMarkers(
                     clusters: EventClusterer.clusters(
@@ -51,6 +51,7 @@ struct EventsMapView: View {
                         visibleRegion: visibleRegion
                     ),
                     fences: fences,
+                    onEventTap: handleEventTap,
                     onClusterTap: handleClusterTap
                 )
             }
@@ -60,32 +61,54 @@ struct EventsMapView: View {
             .onMapCameraChange(frequency: .onEnd) { context in
                 visibleRegion = context.region
             }
-            // Picking a marker replaces any open cluster list.
-            .onChange(of: selectedEvent) { _, newValue in
-                if newValue != nil { pickedCluster = nil }
-            }
             .overlay(alignment: .topLeading) {
                 if let cluster = pickedCluster {
                     MapClusterPopover(
                         events: cluster.events.sorted { $0.timestamp > $1.timestamp },
                         onPick: { event in
+                            // Picking from the list is already deliberate —
+                            // open the event directly, no second dialog.
                             pickedCluster = nil
-                            selectedEvent = event
+                            path.append(event)
                         },
                         onClose: { pickedCluster = nil }
                     )
                     .padding(12)
-                } else if let event = selectedEvent {
-                    MapEventPopover(
-                        event: event,
-                        onOpen: {
-                            selectedEvent = nil
-                            path.append(event)
-                        },
-                        onClose: { selectedEvent = nil }
-                    )
-                    .padding(12)
                 }
+            }
+            // 2.1a: the Trips toggle always shows something — with no drawable
+            // trips, explain why instead of silently drawing nothing.
+            .overlay(alignment: .top) {
+                if showTrips && tripLines.isEmpty {
+                    // TEXT: trips empty state
+                    Text("No trips to draw yet — a trip line needs events at two or more locations.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .padding(10)
+                        .liquidGlassCard(cornerRadius: 12)
+                        .padding(.horizontal, 24)
+                        .padding(.top, 8)
+                }
+            }
+            // UI: tapping a pin asks before opening — a small dialog with the
+            // event's name, time, and an Open Event button.
+            .confirmationDialog(
+                selectedEvent.map { MarkerStyle.title(for: $0) } ?? "Event",
+                isPresented: Binding(
+                    get: { selectedEvent != nil },
+                    set: { if !$0 { selectedEvent = nil } }
+                ),
+                titleVisibility: .visible,
+                presenting: selectedEvent
+            ) { event in
+                // BUTTON: open the tapped pin's full event page
+                Button("Open Event") {
+                    selectedEvent = nil
+                    path.append(event)
+                }
+                Button("Cancel", role: .cancel) { selectedEvent = nil }
+            } message: { event in
+                Text(pinDialogMessage(for: event))
             }
             // UI: timeline scrubber card — safeAreaInset (not overlay) so it
             // never covers the tab bar or steals its taps.
@@ -97,8 +120,10 @@ struct EventsMapView: View {
                 }
             }
             .onChange(of: showTimeline) { _, isOn in
-                // Opening starts at the full span; closing resets the window.
-                timelineWindow = isOn ? fullSpanWindow : nil
+                // Opening resets to the full span. The window is deliberately
+                // kept (inert) on toggle-off: nil-ing it here crashed the
+                // card's unwrapped binding while the inset animated out.
+                if isOn { timelineWindow = fullSpanWindow }
             }
             // Toggled on while the library was still empty → the card sat in
             // its empty state; give it a window once events exist.
@@ -113,25 +138,21 @@ struct EventsMapView: View {
             }
             .toolbar {
                 ToolbarItem {
-                    // BUTTON: density toggle
-                    Toggle(isOn: $showDensity) {
-                        Label("Density", systemImage: "circle.hexagongrid.fill")
+                    // BUTTON: layers menu — one labeled menu instead of three
+                    // bare icon toggles nobody could decipher.
+                    Menu {
+                        Toggle(isOn: $showDensity) {
+                            Label("Density", systemImage: "circle.hexagongrid.fill")
+                        }
+                        Toggle(isOn: $showTrips) {
+                            Label("Trip Lines", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
+                        }
+                        Toggle(isOn: $showTimeline) {
+                            Label("Timeline", systemImage: "clock")
+                        }
+                    } label: {
+                        Label("Map Layers", systemImage: "square.3.layers.3d")
                     }
-                    .toggleStyle(.button)
-                }
-                ToolbarItem {
-                    // BUTTON: trip lines toggle
-                    Toggle(isOn: $showTrips) {
-                        Label("Trips", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
-                    }
-                    .toggleStyle(.button)
-                }
-                ToolbarItem {
-                    // BUTTON: timeline scrubber toggle
-                    Toggle(isOn: $showTimeline) {
-                        Label("Timeline", systemImage: "clock")
-                    }
-                    .toggleStyle(.button)
                 }
             }
         }
@@ -170,6 +191,11 @@ struct EventsMapView: View {
         }
     }
 
+    /// Drawable trip lines for the current window — empty when Trips is off.
+    private var tripLines: [TripLine] {
+        showTrips ? TripPolylineBuilder.tripLines(events: tripLineEvents) : []
+    }
+
     private var fullSpanWindow: TimelineWindow? {
         let stamps = eventsWithLocation.map(\.timestamp)
         guard let first = stamps.min(), let last = stamps.max() else { return nil }
@@ -194,6 +220,17 @@ struct EventsMapView: View {
                 .padding(12)
                 .liquidGlassCard(cornerRadius: 14)
         }
+    }
+
+    /// TEXT: pin dialog message — time, then city when known.
+    private func pinDialogMessage(for event: Event) -> String {
+        let time = event.timestamp.formatted(date: .abbreviated, time: .shortened)
+        return event.city.isEmpty ? time : "\(time) • \(event.city)"
+    }
+
+    private func handleEventTap(_ event: Event) {
+        pickedCluster = nil
+        selectedEvent = event
     }
 
     /// Zoom into a tapped cluster so its pins separate. Members at (nearly)
@@ -278,55 +315,3 @@ private struct MapClusterPopover: View {
     }
 }
 
-// MARK: - Popover
-
-/// UI: small info card shown when a map marker is selected.
-private struct MapEventPopover: View {
-    let event: Event
-    let onOpen: () -> Void
-    let onClose: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(event.timestamp.formatted(date: .abbreviated, time: .shortened))
-                    .font(.headline)
-                Spacer()
-                Button(action: onClose) {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
-                }.buttonStyle(.borderless)
-            }
-            if !event.city.isEmpty { Text(event.city).font(.subheadline) }
-            if event.tag != "unknown" {
-                Text("Behavior: \(event.tag.capitalized)").font(.caption)
-            }
-            if event.interestingnessScore > 0 {
-                Text(ScoreBadge.label(for: event.interestingnessScore))
-                    .font(.caption)
-            }
-            if event.keptOnDevice {
-                // TEXT/ICON: footage saved on this device (Keep on Device)
-                Label("Saved on this device", systemImage: "internaldrive.fill")
-                    .font(.caption)
-                    .foregroundStyle(.green)
-            }
-            if !event.summary.isEmpty {
-                Text(event.summary)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(3)
-            }
-            // BUTTON: jump from the marker to the full event page — without
-            // this the popover was a dead end.
-            Button(action: onOpen) {
-                Label("Open event", systemImage: "chevron.right.circle")
-            }
-            .buttonStyle(.borderless)
-            .padding(.top, 2)
-        }
-        .padding(12)
-        .frame(maxWidth: 320, alignment: .leading)
-        .liquidGlassCard(cornerRadius: 14)
-    }
-}

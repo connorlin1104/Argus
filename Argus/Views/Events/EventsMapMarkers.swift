@@ -90,18 +90,25 @@ enum EventClusterer {
 @MapContentBuilder
 func eventMarkers(clusters: [EventCluster],
                   fences: [Geofence],
+                  onEventTap: @escaping (Event) -> Void,
                   onClusterTap: @escaping (EventCluster) -> Void) -> some MapContent {
     ForEach(clusters) { cluster in
         if cluster.events.count == 1,
            let event = cluster.events.first,
            let coord = MarkerStyle.coordinate(event) {
-            Marker(
+            // Custom annotation with a direct tap gesture — Map selection
+            // with tagged Markers never fired, so pins handle taps the same
+            // deterministic way cluster badges do.
+            Annotation(
                 MarkerStyle.title(for: event),
-                systemImage: MarkerStyle.symbol(for: event, fences: fences),
                 coordinate: coord
-            )
-            .tint(MarkerStyle.color(for: event, fences: fences))
-            .tag(event as Event?)
+            ) {
+                EventPinBadge(
+                    symbol: MarkerStyle.symbol(for: event, fences: fences),
+                    tint: MarkerStyle.color(for: event, fences: fences)
+                )
+                .onTapGesture { onEventTap(event) }
+            }
         } else {
             // TEXT: cluster label — lead event's name plus how many more.
             Annotation(
@@ -115,6 +122,23 @@ func eventMarkers(clusters: [EventCluster],
                 .onTapGesture { onClusterTap(cluster) }
             }
         }
+    }
+}
+
+/// UI: single-event map pin — the event's tag/zone symbol in a tinted circle.
+private struct EventPinBadge: View {
+    let symbol: String
+    let tint: Color
+
+    var body: some View {
+        Image(systemName: symbol)
+            .font(.caption.bold())
+            .foregroundStyle(.white)
+            .padding(7)
+            .frame(minWidth: 30, minHeight: 30)
+            .background(tint.gradient, in: Circle())
+            .overlay(Circle().stroke(.white, lineWidth: 2))
+            .shadow(radius: 2)
     }
 }
 
