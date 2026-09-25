@@ -93,7 +93,9 @@ func tripPolylines(lines: [TripLine]) -> some MapContent {
     ForEach(segments) { segment in
         MapPolyline(coordinates: [segment.start, segment.end])
             .stroke(
-                Color.accentColor.opacity(segment.opacity),
+                // COLOR: orange — accent blue blended into map roads/water
+                // and the blue pins.
+                Color.orange.opacity(segment.opacity),
                 style: StrokeStyle(lineWidth: 3, lineCap: .round)
             )
     }

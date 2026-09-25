@@ -197,6 +197,10 @@ struct EventDetailView: View {
             // clips just come out a touch shorter.
             let heightFittedWidth = availableHeight * (4.0 / 3.0)
             let playerWidth = max(360, min(playerColumnMaxWidth, availableWidth, heightFittedWidth))
+            // Clamp the info column only while the real player is showing —
+            // the short "Video files not found" / "No matching clips" cards
+            // would otherwise crush the whole left column to their height.
+            let playerVisible = !matchedVideos.isEmpty && !clipFilesMissing
 
             HStack(alignment: .top, spacing: columnSpacing) {
                 // LAYOUT: the info column scrolls within the player-height
@@ -210,7 +214,8 @@ struct EventDetailView: View {
                     // compensate for the -12 top padding below that lifts the name
                     // badge to timer level) so Notes can't push past the player.
                     .frame(
-                        maxHeight: rightColumnHeight > 0 ? rightColumnHeight + 12 : .infinity,
+                        maxHeight: playerVisible && rightColumnHeight > 0
+                            ? rightColumnHeight + 12 : .infinity,
                         alignment: .top
                     )
                     // LAYOUT: pull the name badge up so its frame aligns with the

@@ -11,11 +11,19 @@ import CoreLocation
 
 enum TripGrouper {
 
+    /// Bump when the grouping rules change — MainView restamps the whole
+    /// library once on launch when its stored version is older.
+    static let groupingVersion = 2
+
     /// TUNING: time gap that ends a trip.
     static let tripGapSeconds: TimeInterval = 20 * 60
 
-    /// TUNING: distance jump that ends a trip.
-    static let tripJumpMeters: Double = 5_000
+    /// TUNING: distance jump that ends a trip. Meant to catch teleports (GPS
+    /// glitches, imports from another city), not real driving — 5 km split
+    /// most actual drives into single-event fragments, so almost no trip had
+    /// two locations left to draw a line through. 50 km in under 20 min is
+    /// ~150 km/h; anything past that isn't the same drive.
+    static let tripJumpMeters: Double = 50_000
 
     /// Walk events in chronological order, stamping tripID. Existing IDs are
     /// overwritten.
