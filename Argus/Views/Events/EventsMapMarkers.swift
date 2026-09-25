@@ -129,6 +129,9 @@ func eventMarkers(clusters: [EventCluster],
 private struct EventPinBadge: View {
     let symbol: String
     let tint: Color
+    /// Pointer affordance (macOS / iPad trackpad): the badge swells under the
+    /// cursor to signal it's clickable. No-op on touch.
+    @State private var isHovered = false
 
     var body: some View {
         Image(systemName: symbol)
@@ -139,6 +142,9 @@ private struct EventPinBadge: View {
             .background(tint.gradient, in: Circle())
             .overlay(Circle().stroke(.white, lineWidth: 2))
             .shadow(radius: 2)
+            .scaleEffect(isHovered ? 1.25 : 1)
+            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isHovered)
+            .onHover { isHovered = $0 }
     }
 }
 
@@ -146,6 +152,8 @@ private struct EventPinBadge: View {
 private struct ClusterBadge: View {
     let count: Int
     let tint: Color
+    /// Same pointer affordance as EventPinBadge.
+    @State private var isHovered = false
 
     var body: some View {
         Text("\(count)")
@@ -157,6 +165,9 @@ private struct ClusterBadge: View {
             .background(tint.gradient, in: Circle())
             .overlay(Circle().stroke(.white, lineWidth: 2))
             .shadow(radius: 2)
+            .scaleEffect(isHovered ? 1.25 : 1)
+            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isHovered)
+            .onHover { isHovered = $0 }
     }
 }
 

@@ -13,6 +13,10 @@ import SwiftData
 import MapKit
 
 struct EventsMapView: View {
+    /// NAV: opening an event from the map switches to the Events tab and
+    /// pushes it there — the map itself never hosts detail pages.
+    let openInEventsTab: (Event) -> Void
+
     @Query private var events: [Event]
     @Query(sort: \Geofence.name) private var fences: [Geofence]
     @State private var selectedEvent: Event?
@@ -23,8 +27,6 @@ struct EventsMapView: View {
     /// when toggled off (not persisted).
     @State private var showTimeline: Bool = false
     @State private var timelineWindow: TimelineWindow?
-    /// NAV: typed path so the marker popover can push EventDetailView.
-    @State private var path: [Event] = []
     /// Camera binding so tapping a cluster can zoom into it.
     @State private var camera: MapCameraPosition = .automatic
     /// Last settled viewport — clusters are recomputed against its span, so
@@ -35,11 +37,11 @@ struct EventsMapView: View {
     @State private var pickedCluster: EventCluster?
 
     var body: some View {
-        NavigationStack(path: $path) {
+        NavigationStack {
             // UI: full-screen Map with markers (and optional density overlay).
             Map(position: $camera) {
                 if showDensity {
-                    densityCircles(events: windowedEvents)
+                    densityCircles(events: windowedEvents, visibleRegion: visibleRegion)
                 }
                 // Trips render before markers so lines sit under the pins.
                 if showTrips {
@@ -69,7 +71,7 @@ struct EventsMapView: View {
                             // Picking from the list is already deliberate —
                             // open the event directly, no second dialog.
                             pickedCluster = nil
-                            path.append(event)
+                            openInEventsTab(event)
                         },
                         onClose: { pickedCluster = nil }
                     )
@@ -101,10 +103,10 @@ struct EventsMapView: View {
                 titleVisibility: .visible,
                 presenting: selectedEvent
             ) { event in
-                // BUTTON: open the tapped pin's full event page
+                // BUTTON: open the tapped pin's full event page (Events tab)
                 Button("Open Event") {
                     selectedEvent = nil
-                    path.append(event)
+                    openInEventsTab(event)
                 }
                 Button("Cancel", role: .cancel) { selectedEvent = nil }
             } message: { event in
@@ -133,9 +135,6 @@ struct EventsMapView: View {
                 }
             }
             .navigationTitle("Map")
-            .navigationDestination(for: Event.self) { event in
-                EventDetailView(event: event)
-            }
             .toolbar {
                 ToolbarItem {
                     // BUTTON: layers menu — one labeled menu instead of three
@@ -156,12 +155,6 @@ struct EventsMapView: View {
                 }
             }
         }
-        // NAV: trip-sibling and mini-map pin taps inside a map-pushed detail
-        // view use \.openEvent too — wire it to this tab's stack so they
-        // aren't silent no-ops here.
-        .environment(\.openEvent, OpenEventAction { event in
-            path.append(event)
-        })
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 

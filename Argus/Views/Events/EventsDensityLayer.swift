@@ -13,13 +13,19 @@ import MapKit
 
 @MainActor
 @MapContentBuilder
-func densityCircles(events: [Event]) -> some MapContent {
+func densityCircles(events: [Event], visibleRegion: MKCoordinateRegion?) -> some MapContent {
     let buckets = DensityBucketer.bucket(events)
-    let max = Double(buckets.map(\.count).max() ?? 1)
+    let maxCount = Double(buckets.map(\.count).max() ?? 1)
+    // MapCircle radii are in meters, so a fixed radius vanishes when zoomed
+    // out. Scale with the visible span instead: the base circle is always
+    // ~3% of the viewport. The floor keeps close-up circles near the ~100 m
+    // bucket footprint (densest = 2.5×base = 100 m) instead of ballooning.
+    let spanMeters = (visibleRegion?.span.latitudeDelta ?? 0.05) * 111_000
+    let base = Swift.max(40.0, spanMeters * 0.03)
     ForEach(buckets) { bucket in
-        let weight = Double(bucket.count) / max
-        // TUNING: 80 m base radius scaled up to 220 m at the densest bucket.
-        let radius = 80 + 140 * weight
+        let weight = Double(bucket.count) / maxCount
+        // TUNING: densest bucket draws at 2.5× the base radius.
+        let radius = base * (1 + 1.5 * weight)
         MapCircle(center: bucket.coordinate, radius: radius)
             .foregroundStyle(
                 Color.red.opacity(0.18 + 0.45 * weight)

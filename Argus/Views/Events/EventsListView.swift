@@ -36,10 +36,15 @@ struct EventsListView: View {
     /// the user's zone names to the icon family the user picked.
     @Query(sort: \Geofence.name) private var fences: [Geofence]
 
+    /// NAV: set by the Map tab to open an event here; the root pushes it and
+    /// clears the binding.
+    var externalOpenEvent: Binding<Event?> = .constant(nil)
+
     var body: some View {
         // Reading filterState inside EventsListRoot.init is tracked by this
         // body, so any filter change re-creates the root with a fresh query.
-        EventsListRoot(filterState: filterState, fences: fences)
+        EventsListRoot(filterState: filterState, fences: fences,
+                       externalOpenEvent: externalOpenEvent)
     }
 }
 
@@ -104,6 +109,8 @@ private struct EventsListRoot: View {
     // === Navigation ===
     /// NAV: typed path for the events tab. Push events with `path.append(event)`.
     @State private var path: [Event] = []
+    /// NAV: cross-tab open request from the Map tab (see MainView).
+    var externalOpenEvent: Binding<Event?>
 
     // === Rename (long-press context menu) ===
     /// UI: event currently being renamed via the row long-press / right-click menu.
@@ -116,8 +123,10 @@ private struct EventsListRoot: View {
     /// multi-selection). Non-empty drives the confirmation dialog.
     @State private var pendingDeletion: [Event] = []
 
-    init(filterState: EventsListFilterState, fences: [Geofence]) {
+    init(filterState: EventsListFilterState, fences: [Geofence],
+         externalOpenEvent: Binding<Event?>) {
         self.filterState = filterState
+        self.externalOpenEvent = externalOpenEvent
         _events = Query(Self.descriptor(for: filterState, fences: fences))
         // Pending events don't count as "imported" yet — the hero import UI
         // (with the analyzing banner over it) stays up until the first one
@@ -275,6 +284,13 @@ private struct EventsListRoot: View {
         .environment(\.openEvent, OpenEventAction { event in
             path.append(event)
         })
+        // NAV: Map-tab pin taps land here — push the event and clear the
+        // request so the same pin can be tapped again later.
+        .onChange(of: externalOpenEvent.wrappedValue) { _, event in
+            guard let event else { return }
+            path.append(event)
+            externalOpenEvent.wrappedValue = nil
+        }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .sheet(isPresented: $showImportScope, onDismiss: {
             // Start the import only after the sheet is fully gone so the
