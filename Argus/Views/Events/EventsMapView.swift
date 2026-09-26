@@ -21,8 +21,6 @@ struct EventsMapView: View {
     @Query(sort: \Geofence.name) private var fences: [Geofence]
     @State private var selectedEvent: Event?
     @State private var showDensity: Bool = false
-    /// Trip polylines toggle — persisted; lines are cheap and unobtrusive.
-    @AppStorage("mapShowTrips") private var showTrips: Bool = false
     /// Timeline scrubber toggle — the window itself intentionally resets
     /// when toggled off (not persisted).
     @State private var showTimeline: Bool = false
@@ -42,10 +40,6 @@ struct EventsMapView: View {
             Map(position: $camera) {
                 if showDensity {
                     densityCircles(events: windowedEvents, visibleRegion: visibleRegion)
-                }
-                // Trips render before markers so lines sit under the pins.
-                if showTrips {
-                    tripPolylines(lines: tripLines)
                 }
                 eventMarkers(
                     clusters: EventClusterer.clusters(
@@ -76,20 +70,6 @@ struct EventsMapView: View {
                         onClose: { pickedCluster = nil }
                     )
                     .padding(12)
-                }
-            }
-            // 2.1a: the Trips toggle always shows something — with no drawable
-            // trips, explain why instead of silently drawing nothing.
-            .overlay(alignment: .top) {
-                if showTrips && tripLines.isEmpty {
-                    // TEXT: trips empty state
-                    Text("No trips to draw yet — a trip line needs events at two or more locations.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .padding(10)
-                        .liquidGlassCard(cornerRadius: 12)
-                        .padding(.horizontal, 24)
-                        .padding(.top, 8)
                 }
             }
             // UI: tapping a pin asks before opening — a small dialog with the
@@ -143,9 +123,6 @@ struct EventsMapView: View {
                         Toggle(isOn: $showDensity) {
                             Label("Density", systemImage: "circle.hexagongrid.fill")
                         }
-                        Toggle(isOn: $showTrips) {
-                            Label("Trip Lines", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
-                        }
                         Toggle(isOn: $showTimeline) {
                             Label("Timeline", systemImage: "clock")
                         }
@@ -167,26 +144,6 @@ struct EventsMapView: View {
     private var windowedEvents: [Event] {
         guard showTimeline, let window = timelineWindow else { return eventsWithLocation }
         return eventsWithLocation.filter { window.contains($0.timestamp) }
-    }
-
-    /// Trips draw whole-line or not at all: a trip appears when ANY of its
-    /// events is inside the window, and then all its points draw — a line cut
-    /// mid-trip would misrepresent the drive.
-    private var tripLineEvents: [Event] {
-        guard showTimeline, let window = timelineWindow else { return eventsWithLocation }
-        let visibleTripIDs = Set(
-            eventsWithLocation
-                .filter { window.contains($0.timestamp) }
-                .compactMap(\.tripID)
-        )
-        return eventsWithLocation.filter {
-            $0.tripID.map(visibleTripIDs.contains) ?? false
-        }
-    }
-
-    /// Drawable trip lines for the current window — empty when Trips is off.
-    private var tripLines: [TripLine] {
-        showTrips ? TripPolylineBuilder.tripLines(events: tripLineEvents) : []
     }
 
     private var fullSpanWindow: TimelineWindow? {
