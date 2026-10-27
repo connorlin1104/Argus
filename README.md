@@ -15,6 +15,16 @@ Built with SwiftUI, SwiftData, AVFoundation, Vision, MapKit, and (where availabl
 - **Clip export (macOS)** — Save a ±5 s clip around the current scrubber position straight to disk.
 - **Optional iCloud sync** — Events and geofences sync via CloudKit; videos stay local because security-scoped bookmarks aren't portable.
 
+## Screenshots
+
+| Events list | Multi-cam playback | Focused camera |
+| :---: | :---: | :---: |
+| <img src="docs/screenshots/events-list.png" width="260" alt="Events list with filters, behavior tags, and recognized plates"> | <img src="docs/screenshots/multicam-grid.png" width="260" alt="Synchronized 2×2 multi-camera playback with detection markers on the scrubber"> | <img src="docs/screenshots/multicam-front.png" width="260" alt="Front camera focused playback with event tags and plate chips"> |
+
+| Map timeline | Videos tab | Scoped import |
+| :---: | :---: | :---: |
+| <img src="docs/screenshots/map-timeline.png" width="260" alt="Map of geo-tagged events with the date-range timeline scrubber"> | <img src="docs/screenshots/videos-list.png" width="260" alt="Videos tab listing imported clips grouped by date and camera"> | <img src="docs/screenshots/import-scope.png" width="260" alt="Import sheet with size estimates for everything, last 7/30 days, or a custom range"> |
+
 ## Requirements
 
 - Xcode 16 or newer
