@@ -30,6 +30,9 @@ action generates just the PDF. Rendered via SwiftUI `ImageRenderer` into
 a vector CGContext PDF; stills picked from persisted detection markers
 (`EventStillPicker`, unit-tested); PDF failures never fail the export.
 
+Next up (decided Nov 2026): once 1.2 reaches TestFlight, do the
+natural-language search over AI summaries (Tier 4) before starting Tier 2.
+
 ## Tier 2 — Smarter detection (the moat)
 
 3. **Behavior classification** — rule layer over existing bbox trajectories
