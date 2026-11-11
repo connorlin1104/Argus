@@ -22,19 +22,13 @@ fixes with the Evidence Package export. If the feature drags, cut it from
 
 ## Tier 1 — Evidence Package export (headline feature, target: 1.2)
 
-A polished PDF per event, bundled alongside the existing clips zip:
-
-- Mini-map snapshot, AI summary, key video stills (closest-approach frame,
-  plate frames), timestamps/address/metadata, watchlist match callout.
-- Builds almost entirely on existing pieces: `EventExporter`,
-  `EventSummarizer`, detection data, `EventMiniMapSection`.
-- The concrete "hand this to police/insurance" use case.
-
-Open questions for the detailed plan:
-- PDF generation approach (SwiftUI `ImageRenderer` vs. Core Graphics).
-- How to auto-pick the stills worth including.
-- Single-event vs. batch export.
-- iOS share-sheet story.
+DONE (pending manual PDF verification). Every exported event folder now
+includes `event.pdf` beside `event.json`: print-styled report with map
+snapshot, AI summary, marker-picked video stills with captions, metadata
+table, watchlist callout, and plate reads. A per-event "Share report…"
+action generates just the PDF. Rendered via SwiftUI `ImageRenderer` into
+a vector CGContext PDF; stills picked from persisted detection markers
+(`EventStillPicker`, unit-tested); PDF failures never fail the export.
 
 ## Tier 2 — Smarter detection (the moat)
 
