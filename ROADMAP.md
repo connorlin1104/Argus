@@ -4,9 +4,11 @@ Prioritized outline for upcoming releases. Each tier gets expanded into a
 concrete implementation plan (files to touch, data flow, tests) when we
 start it — this document is the ordering, not the design.
 
-Status: 1.1 uploaded to the App Store (Nov 2026). Bug fixes below ship in 1.2.
+Status: 1.1 approved and released (Nov 2026). 1.2 bundles the Tier 0 bug
+fixes with the Evidence Package export. If the feature drags, cut it from
+1.2 and ship the fixes alone.
 
-## Tier 0 — Ship-blockers (target: 1.2)
+## Tier 0 — Bug fixes (target: 1.2)
 
 1. **Lock-mid-scan silent partial scans** — a mid-scan screen lock quietly
    produces half-analyzed videos. Check `reader.status` after the read loop
@@ -16,9 +18,7 @@ Status: 1.1 uploaded to the App Store (Nov 2026). Bug fixes below ship in 1.2.
    mark. No reliable repro yet; first task is capturing a console log of
    the freeze, then fix.
 
-Exit criteria: both fixed and verified → 1.2 submission.
-
-## Tier 1 — Evidence Package export (headline feature, target: 1.3)
+## Tier 1 — Evidence Package export (headline feature, target: 1.2)
 
 A polished PDF per event, bundled alongside the existing clips zip:
 
