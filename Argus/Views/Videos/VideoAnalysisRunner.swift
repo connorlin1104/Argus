@@ -65,7 +65,8 @@ enum VideoAnalysisRunner {
         // moment. Results are applied on the main actor as each clip
         // finishes, so the model writes stay serialized while detection
         // overlaps across clips.
-        await withTaskGroup(of: (index: Int, scan: ClipScanResult).self) { group in
+        var interrupted: [ScanItem] = []
+        await withTaskGroup(of: (item: ScanItem, scan: ClipScanResult).self) { group in
             var next = 0
             func addNextScan() {
                 guard next < items.count else { return }
@@ -78,16 +79,49 @@ enum VideoAnalysisRunner {
                         url: item.url,
                         vfovDegrees: item.vfovDegrees
                     )
-                    return (item.index, scan)
+                    return (item, scan)
                 }
             }
             for _ in 0..<max(1, maxConcurrent) { addNextScan() }
 
             while let result = await group.next() {
                 addNextScan()
-                let video = videos[result.index]
+                // An interrupted decode (screen lock killed the session) must
+                // not be persisted — partial detections written as a finished
+                // scan are indistinguishable from "nothing happened". Queue
+                // for one retry at batch end; the tick comes then.
+                if result.scan.decodeInterrupted {
+                    interrupted.append(result.item)
+                    continue
+                }
+                let video = videos[result.item.index]
                 await apply(
                     scan: result.scan,
+                    to: video,
+                    analyzer: analyzer,
+                    modelContext: modelContext
+                )
+                analyzer.tickBatch(label: "Done \(video.url.lastPathComponent)")
+            }
+        }
+
+        // Retry interrupted clips once, sequentially — by batch end the
+        // device is typically unlocked again and the decode succeeds. A clip
+        // that fails twice ticks as skipped so the batch count stays honest
+        // and the user knows to rescan (Settings → Scan Event Clips).
+        for item in interrupted {
+            let video = videos[item.index]
+            let didAccess = item.url.startAccessingSecurityScopedResource()
+            defer { if didAccess { item.url.stopAccessingSecurityScopedResource() } }
+            let scan = await DetectionEngine.runDetections(
+                url: item.url,
+                vfovDegrees: item.vfovDegrees
+            )
+            if scan.decodeInterrupted {
+                analyzer.tickBatch(label: "Skipped (decode interrupted) \(video.url.lastPathComponent)")
+            } else {
+                await apply(
+                    scan: scan,
                     to: video,
                     analyzer: analyzer,
                     modelContext: modelContext

@@ -15,6 +15,9 @@
 import Foundation
 import Observation
 import CoreGraphics
+#if os(iOS)
+import UIKit
+#endif
 
 // MARK: - Analyzer state
 
@@ -177,6 +180,12 @@ class VideoAnalyzer {
         isAnalyzing = true
         batchStartedAt = Date()
         currentTaskLabel = "Starting analysis…"
+        // Auto-lock mid-batch kills the in-flight decode sessions (the
+        // silent-partial-scan bug) — keep the screen awake while scanning.
+        // Manual locks are still caught by the reader.status check + retry.
+        #if os(iOS)
+        UIApplication.shared.isIdleTimerDisabled = true
+        #endif
     }
 
     func tickBatch(label: String) {
@@ -194,5 +203,8 @@ class VideoAnalyzer {
         progress = 0
         totalVideos = 0
         completedVideos = 0
+        #if os(iOS)
+        UIApplication.shared.isIdleTimerDisabled = false
+        #endif
     }
 }

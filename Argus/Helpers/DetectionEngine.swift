@@ -19,6 +19,17 @@ import CoreGraphics
 struct ClipScanResult: Sendable {
     let detections: [Detection]
     let humanContext: [String]
+    /// True when the decode didn't run to completion — the reader failed
+    /// mid-clip (e.g. iOS tore down the decode session on screen lock) or
+    /// couldn't be created at all. Detections may be partial; callers must
+    /// not persist them as a finished scan.
+    let decodeInterrupted: Bool
+
+    init(detections: [Detection], humanContext: [String], decodeInterrupted: Bool = false) {
+        self.detections = detections
+        self.humanContext = humanContext
+        self.decodeInterrupted = decodeInterrupted
+    }
 }
 
 enum DetectionEngine {
@@ -35,11 +46,15 @@ enum DetectionEngine {
     /// the carried-object / companion context seen alongside people.
     static func runDetections(url: URL, vfovDegrees: Double) async -> ClipScanResult {
         let asset = AVURLAsset(url: url)
+        // Setup failures count as interruptions, not empty clips: track
+        // loading and reader creation both fail while the device is locked
+        // (protected data unavailable), and writing an empty "completed"
+        // scan here is exactly the silent-partial-scan bug.
         guard let track = try? await asset.loadTracks(withMediaType: .video).first else {
-            return ClipScanResult(detections: [], humanContext: [])
+            return ClipScanResult(detections: [], humanContext: [], decodeInterrupted: true)
         }
         guard let reader = try? AVAssetReader(asset: asset) else {
-            return ClipScanResult(detections: [], humanContext: [])
+            return ClipScanResult(detections: [], humanContext: [], decodeInterrupted: true)
         }
         // Decode capped at maxDecodeDimension — full-size 32BGRA frames from
         // HW4 cameras are ~21 MB each and were a big slice of the scan's
@@ -103,6 +118,18 @@ enum DetectionEngine {
                 return false
             }
             if finished { break }
+        }
+
+        // copyNextSampleBuffer returns nil for end-of-file AND for a failed
+        // reader — locking the phone mid-scan tears down the decode session
+        // and the loop above exits early with partial detections. Only a
+        // .completed reader means the whole clip was actually scanned.
+        guard reader.status == .completed else {
+            return ClipScanResult(
+                detections: detections,
+                humanContext: [],
+                decodeInterrupted: true
+            )
         }
 
         // Noise gate: a phrase must show up in at least 2 sampled frames.
