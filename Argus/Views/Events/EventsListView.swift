@@ -778,6 +778,10 @@ private struct EventsListRoot: View {
                     let n = result.skippedClips.count
                     warnings.append("\(n) file\(n == 1 ? "" : "s") couldn't be read and \(n == 1 ? "is" : "are") missing from the zip — is the source drive still connected? Missing: \(result.skippedClips.joined(separator: ", "))")
                 }
+                if !result.pdfFailures.isEmpty {
+                    let n = result.pdfFailures.count
+                    warnings.append("\(n) evidence report\(n == 1 ? "" : "s") couldn't be generated — the affected folder\(n == 1 ? " still contains its" : "s still contain their") clips and event.json: \(result.pdfFailures.joined(separator: ", "))")
+                }
                 exportWarning = warnings.isEmpty ? nil : warnings.joined(separator: "\n\n")
                 exportedZipURL = result.zipURL
                 exportLabel = "Done"

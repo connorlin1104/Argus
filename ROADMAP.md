@@ -10,13 +10,15 @@ fixes with the Evidence Package export. If the feature drags, cut it from
 
 ## Tier 0 — Bug fixes (target: 1.2)
 
-1. **Lock-mid-scan silent partial scans** — a mid-scan screen lock quietly
-   produces half-analyzed videos. Check `reader.status` after the read loop
-   and add an idle timer so a stalled scan surfaces as an error instead of
-   a silent partial result.
-2. **Frozen playback past 1:00** — playback freezes past the one-minute
-   mark. No reliable repro yet; first task is capturing a console log of
-   the freeze, then fix.
+1. **Lock-mid-scan silent partial scans** — DONE (pending on-device
+   verification). Interrupted decodes are flagged via `reader.status`,
+   never persisted, retried once at batch end; idle timer disabled while
+   scanning.
+2. **Frozen playback past 1:00** — BLOCKED on a console-attached device
+   repro (currently no phone attach; dev-account issue blocks TestFlight).
+   Prep done: videoComposition creation failures in the stitcher now log
+   loudly instead of being swallowed by `try?`. Revisit when the account
+   clears; may ship 1.2 without this fix.
 
 ## Tier 1 — Evidence Package export (headline feature, target: 1.2)
 

@@ -11,6 +11,7 @@
 //            left.mp4
 //            ...
 //            event.json     (Event metadata + summary)
+//            event.pdf      (Evidence Package report)
 //
 
 import Foundation
@@ -48,6 +49,10 @@ enum EventExporter {
         /// `skippedClips`: nothing failed, there was simply no footage to
         /// stage for these events.
         let eventsWithoutClips: [String]
+        /// Event folders whose evidence report PDF couldn't be generated.
+        /// The folder still holds its clips and event.json — a failed PDF
+        /// never fails the export.
+        let pdfFailures: [String]
     }
 
     /// Stages the export bundle and zips it. The result's zipURL points to
@@ -83,6 +88,10 @@ enum EventExporter {
         var stagedClips = 0
         var skippedClips: [String] = []
         var eventsWithoutClips: [String] = []
+        var pdfFailures: [String] = []
+        // One watchlist fetch for the whole batch — the PDF's watchlist
+        // callout matches against it per event.
+        let watchlist = (try? modelContext.fetch(FetchDescriptor<Watchlist>())) ?? []
 
         for (i, entry) in plan.enumerated() {
             let subfolder = folderName(for: entry.event)
@@ -114,6 +123,22 @@ enum EventExporter {
                 skippedClips.append("event.json (\(subfolder))")
             }
 
+            // Evidence report PDF beside event.json. Failures are recorded,
+            // never thrown — the clips and metadata are the irreplaceable
+            // part of the export.
+            do {
+                let pdfURL = metaURL.deletingLastPathComponent()
+                    .appendingPathComponent("event.pdf")
+                try await EvidencePackageRenderer.writePDF(
+                    event: entry.event,
+                    videos: entry.videos,
+                    watchlist: watchlist,
+                    to: pdfURL
+                )
+            } catch {
+                pdfFailures.append("event.pdf (\(subfolder))")
+            }
+
             let label = "Staged \(i + 1)/\(events.count)"
             await MainActor.run { progress(Double(i + 1) / total, label) }
         }
@@ -126,7 +151,8 @@ enum EventExporter {
         return ExportResult(zipURL: zipURL,
                             stagedClips: stagedClips,
                             skippedClips: skippedClips,
-                            eventsWithoutClips: eventsWithoutClips)
+                            eventsWithoutClips: eventsWithoutClips,
+                            pdfFailures: pdfFailures)
     }
 
     /// Throw before staging if the temp volume can't hold the staged copies

@@ -17,6 +17,9 @@ struct EventShareMenu: View {
 
     /// Matched videos by timestamp overlap (same predicate EventDetailView uses).
     @Query private var matchedVideos: [VideoRecording]
+    /// Whole watchlist — the evidence report's watchlist callout matches
+    /// against it.
+    @Query private var watchlist: [Watchlist]
 
     @State private var sharedURLs: [URL] = []
     @State private var quickLookURL: URL? = nil
@@ -37,11 +40,21 @@ struct EventShareMenu: View {
         Menu {
             // BUTTON: stage clips, then open ShareLink-style share sheet
             Button {
-                Task { await stage(); presentShare() }
+                Task { await stage(); presentShare(urls: sharedURLs) }
             } label: {
                 Label("Share clips…", systemImage: "square.and.arrow.up")
             }
             .disabled(matchedVideos.isEmpty || isResolving)
+
+            // BUTTON: generate the Evidence Package PDF and share just it.
+            // Not gated on matched clips — a report with map + metadata and
+            // no stills is still useful.
+            Button {
+                Task { await shareReport() }
+            } label: {
+                Label("Share report…", systemImage: "doc.richtext")
+            }
+            .disabled(isResolving)
 
             // BUTTON: open the first matched clip in Quick Look
             Button {
@@ -73,12 +86,36 @@ struct EventShareMenu: View {
         sharedURLs = urls
     }
 
+    /// Generate the Evidence Package PDF into session-lifetime staging
+    /// (swept on next launch, like shared clips) and hand it to the share
+    /// sheet. Regenerated per share so edits to name/notes/summary between
+    /// shares are reflected.
+    @MainActor
+    private func shareReport() async {
+        isResolving = true
+        defer { isResolving = false }
+        let staging = EventFileVendor.makeStagingRoot(prefix: "event-share")
+        let dest = staging.appendingPathComponent(
+            EvidencePackageRenderer.pdfFileName(for: event))
+        do {
+            try await EvidencePackageRenderer.writePDF(
+                event: event,
+                videos: matchedVideos,
+                watchlist: watchlist,
+                to: dest
+            )
+            presentShare(urls: [dest])
+        } catch {
+            print("EventShareMenu: evidence report failed: \(error)")
+        }
+    }
+
     /// Programmatic ShareLink presentation — wraps the URLs in an
     /// AnyTransferable list so the system share sheet handles them.
-    private func presentShare() {
-        guard !sharedURLs.isEmpty else { return }
+    private func presentShare(urls: [URL]) {
+        guard !urls.isEmpty else { return }
         #if canImport(AppKit)
-        let picker = NSSharingServicePicker(items: sharedURLs as [Any])
+        let picker = NSSharingServicePicker(items: urls as [Any])
         if let win = NSApp.keyWindow,
            let view = win.contentView {
             picker.show(relativeTo: .zero, of: view, preferredEdge: .minY)
@@ -86,7 +123,7 @@ struct EventShareMenu: View {
         #else
         // On iOS the in-menu ShareLink is the conventional path; for the
         // programmatic flow we hand off to UIActivityViewController.
-        let av = UIActivityViewController(activityItems: sharedURLs, applicationActivities: nil)
+        let av = UIActivityViewController(activityItems: urls, applicationActivities: nil)
         UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
             .first?
