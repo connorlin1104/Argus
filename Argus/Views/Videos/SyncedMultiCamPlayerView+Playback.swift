@@ -219,8 +219,19 @@ extension SyncedMultiCamPlayerView {
                 // it's an OS playback regression, not Tesla corruption — a
                 // video composition routes rendering through the compositor,
                 // which handles cross-file segments correctly.
-                item.videoComposition = try? await AVMutableVideoComposition
-                    .videoComposition(withPropertiesOf: composition)
+                do {
+                    item.videoComposition = try await AVMutableVideoComposition
+                        .videoComposition(withPropertiesOf: composition)
+                } catch {
+                    // Without a video composition the -12860 freeze is back
+                    // for every cross-file segment — make this failure loud
+                    // so a console-attached repro of the frozen-past-1:00
+                    // bug can confirm or rule it out.
+                    print("MultiCam[\(camKey)]: videoComposition FAILED, cross-file segments will freeze: \(error)")
+                }
+                if item.videoComposition == nil {
+                    print("MultiCam[\(camKey)]: videoComposition is nil after stitch")
+                }
                 duration = cursor.seconds
                 print("MultiCam[\(camKey)]: stitched \(clips.count) clips, final duration \(duration)s (cap \(capTime.seconds)s)")
                 newAssets[camKey] = composition
