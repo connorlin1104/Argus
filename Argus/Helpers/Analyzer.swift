@@ -31,6 +31,7 @@ class VideoAnalyzer {
     var progress: Double = 0.0
     var currentTaskLabel: String = ""
     var totalVideos: Int = 0
+    
     var completedVideos: Int = 0
     /// When the current batch started — drives the elapsed clock in the
     /// analyzing banner. Nil between batches.
