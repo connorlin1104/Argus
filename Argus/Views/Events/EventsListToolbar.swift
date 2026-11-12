@@ -15,6 +15,9 @@ import SwiftData
 struct EventRowContextMenu: View {
     @Environment(\.modelContext) private var modelContext
     let event: Event
+    /// Quick Look target, owned by the hosting list (menu content is torn
+    /// down on dismiss, so the preview can't be presented from in here).
+    @Binding var quickLookURL: URL?
     var onRename: (() -> Void)? = nil
     /// Wired to the parent's confirmation dialog — deletion also removes the
     /// event's orphaned clips (EventDeleter), so it deserves a confirm step.
@@ -65,7 +68,7 @@ struct EventRowContextMenu: View {
         }
         Divider()
         // BUTTON: share / quick-look via EventShareMenu
-        EventShareMenu(event: event)
+        EventShareMenu(event: event, quickLookURL: $quickLookURL)
         Divider()
         // BUTTON: delete (context menu) — parent confirms, then EventDeleter
         // removes the event and any clips no other event references.

@@ -28,6 +28,7 @@
 
 import SwiftUI
 import SwiftData
+import QuickLook
 
 struct EventsListView: View {
     @State private var filterState = EventsListFilterState()
@@ -61,6 +62,10 @@ private struct EventsListRoot: View {
 
     // === Extracted state ===
     @State private var selection = EventsListSelection()
+    /// Quick Look target for the row context menu's share submenu. Owned here
+    /// (not by the menu content) because menu views are torn down on dismiss —
+    /// a preview anchored inside them never presents.
+    @State private var quickLookURL: URL? = nil
     /// Import picker, both platforms. On iOS a few USB / SD storage providers
     /// don't surface an "Open" affordance in the system folder picker, so a
     /// multi-file mode stays available as a fallback. Mode is stored separately
@@ -568,6 +573,9 @@ private struct EventsListRoot: View {
                 listBody
             }
         }
+        // Presenter for the context menu's Quick Look — anchored here so it
+        // survives the menu's dismissal.
+        .quickLookPreview($quickLookURL)
     }
 
     @ViewBuilder
@@ -593,6 +601,7 @@ private struct EventsListRoot: View {
                 .contextMenu {
                     EventRowContextMenu(
                         event: event,
+                        quickLookURL: $quickLookURL,
                         onRename: { beginRename(event) },
                         onDelete: { pendingDeletion = [event] }
                     )

@@ -7,13 +7,25 @@
 //  apps. The temp files persist for the rest of the session (so an in-flight
 //  share is never broken) and are swept on the next app launch.
 //
+//  Lifetime gotcha: this view is rendered inside menus (row context menu,
+//  detail toolbar), and menu content is torn down the moment the menu
+//  dismisses — which is BEFORE any button's Task runs. @State written after
+//  dismissal is lost, so every action passes its results forward directly,
+//  and Quick Look presentation is owned by the host view via a binding.
+//
 
 import SwiftUI
 import SwiftData
 import QuickLook
+import UniformTypeIdentifiers
 
 struct EventShareMenu: View {
     let event: Event
+
+    /// Owned by the hosting view (which outlives the menu) — it attaches
+    /// `.quickLookPreview` to itself. Presenting from inside dismissed menu
+    /// content silently does nothing.
+    @Binding var quickLookURL: URL?
 
     /// Matched videos by timestamp overlap (same predicate EventDetailView uses).
     @Query private var matchedVideos: [VideoRecording]
@@ -21,12 +33,9 @@ struct EventShareMenu: View {
     /// against it.
     @Query private var watchlist: [Watchlist]
 
-    @State private var sharedURLs: [URL] = []
-    @State private var quickLookURL: URL? = nil
-    @State private var isResolving: Bool = false
-
-    init(event: Event) {
+    init(event: Event, quickLookURL: Binding<URL?>) {
         self.event = event
+        _quickLookURL = quickLookURL
         let t = event.timestamp
         let cutoff = EventClipMatcher.earliestClipEnd(for: t)
         _matchedVideos = Query(
@@ -38,13 +47,13 @@ struct EventShareMenu: View {
 
     var body: some View {
         Menu {
-            // BUTTON: stage clips, then open ShareLink-style share sheet
+            // BUTTON: stage clips, then open the system share sheet
             Button {
-                Task { await stage(); presentShare(urls: sharedURLs) }
+                Task { presentShare(urls: await stageClips()) }
             } label: {
                 Label("Share clips…", systemImage: "square.and.arrow.up")
             }
-            .disabled(matchedVideos.isEmpty || isResolving)
+            .disabled(matchedVideos.isEmpty)
 
             // BUTTON: generate the Evidence Package PDF and share just it.
             // Not gated on matched clips — a report with map + metadata and
@@ -54,28 +63,36 @@ struct EventShareMenu: View {
             } label: {
                 Label("Share report…", systemImage: "doc.richtext")
             }
-            .disabled(isResolving)
+
+            #if os(macOS)
+            // BUTTON: write the Evidence Package PDF straight to disk via a
+            // save panel — sharing a file to yourself (Messages round-trip)
+            // shouldn't be the only way to get the report out.
+            Button {
+                Task { await saveReport() }
+            } label: {
+                Label("Save report as PDF…", systemImage: "square.and.arrow.down")
+            }
+            #endif
 
             // BUTTON: open the first matched clip in Quick Look
             Button {
-                Task { await stage(); quickLookURL = sharedURLs.first }
+                Task { quickLookURL = await stageClips().first }
             } label: {
                 Label("Quick Look", systemImage: "eye")
             }
-            .disabled(matchedVideos.isEmpty || isResolving)
+            .disabled(matchedVideos.isEmpty)
         } label: {
-            Image(systemName: "square.and.arrow.up")
-                .foregroundStyle(.secondary)
+            // TEXT: menu title. Shows as text + chevron inside context menus,
+            // collapses to the icon in toolbars.
+            Label("Share", systemImage: "square.and.arrow.up")
         }
-        .buttonStyle(.borderless)
-        .quickLookPreview($quickLookURL)
     }
 
+    /// Stages the matched clips into session-lifetime temp files and returns
+    /// their URLs directly (no @State round-trip — see lifetime gotcha above).
     @MainActor
-    private func stage() async {
-        guard sharedURLs.isEmpty else { return }
-        isResolving = true
-        defer { isResolving = false }
+    private func stageClips() async -> [URL] {
         let staging = EventFileVendor.makeStagingRoot(prefix: "event-share")
         var urls: [URL] = []
         for video in matchedVideos {
@@ -83,7 +100,7 @@ struct EventShareMenu: View {
                 urls.append(url)
             }
         }
-        sharedURLs = urls
+        return urls
     }
 
     /// Generate the Evidence Package PDF into session-lifetime staging
@@ -92,8 +109,6 @@ struct EventShareMenu: View {
     /// shares are reflected.
     @MainActor
     private func shareReport() async {
-        isResolving = true
-        defer { isResolving = false }
         let staging = EventFileVendor.makeStagingRoot(prefix: "event-share")
         let dest = staging.appendingPathComponent(
             EvidencePackageRenderer.pdfFileName(for: event))
@@ -109,6 +124,28 @@ struct EventShareMenu: View {
             print("EventShareMenu: evidence report failed: \(error)")
         }
     }
+
+    #if os(macOS)
+    /// Generate the Evidence Package PDF directly at a user-chosen location.
+    @MainActor
+    private func saveReport() async {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.pdf]
+        panel.nameFieldStringValue = EvidencePackageRenderer.pdfFileName(for: event)
+        guard panel.runModal() == .OK, let dest = panel.url else { return }
+        try? FileManager.default.removeItem(at: dest)
+        do {
+            try await EvidencePackageRenderer.writePDF(
+                event: event,
+                videos: matchedVideos,
+                watchlist: watchlist,
+                to: dest
+            )
+        } catch {
+            print("EventShareMenu: evidence report save failed: \(error)")
+        }
+    }
+    #endif
 
     /// Programmatic ShareLink presentation — wraps the URLs in an
     /// AnyTransferable list so the system share sheet handles them.

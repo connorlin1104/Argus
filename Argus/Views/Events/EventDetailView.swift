@@ -17,6 +17,7 @@
 
 import SwiftUI
 import SwiftData
+import QuickLook
 
 /// LAYOUT: Preference key used to read the right (player) column's natural
 /// height so the left info column can match it. Without this, Notes absorbs
@@ -60,6 +61,9 @@ struct EventDetailView: View {
     /// Confirmation gate for the toolbar archive/unarchive toggle — easy to
     /// hit by accident next to the favorite star.
     @State private var confirmArchiveToggle: Bool = false
+    /// Quick Look target for the toolbar share menu. Owned here (not by the
+    /// menu content) because menu views are torn down on dismiss.
+    @State private var quickLookURL: URL? = nil
     /// Keep-on-device state: true while footage is copying into the app.
     @State private var isKeeping: Bool = false
     /// Keep failure explanation (drive unplugged, disk full). The button
@@ -162,6 +166,9 @@ struct EventDetailView: View {
         .toolbar(isLandscape ? .hidden : .automatic, for: .navigationBar)
         #endif
         .toolbar { toolbarContent }
+        // Presenter for the share menu's Quick Look — anchored here so it
+        // survives the menu's dismissal.
+        .quickLookPreview($quickLookURL)
     }
 
     /// TEXT: title shown in the navigation bar.
@@ -637,6 +644,12 @@ struct EventDetailView: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
+        // BUTTON: share / export menu (clips, evidence report, Quick Look) —
+        // the same menu the row context menu offers, surfaced where users
+        // actually look for it.
+        ToolbarItem {
+            EventShareMenu(event: event, quickLookURL: $quickLookURL)
+        }
         // BUTTON: favorite toggle (star)
         ToolbarItem {
             Button {
