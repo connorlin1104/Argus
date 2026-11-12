@@ -636,6 +636,9 @@ private struct EventsListRoot: View {
             #endif
 
             if selection.isSelecting && !selection.selectedIDs.isEmpty {
+                // macOS collapses toolbar labels to icon-only by default, and
+                // the bare glyphs read ambiguously (the keep icon was mistaken
+                // for import) — force title + icon on the Mac.
                 ToolbarItem {
                     // BUTTON: bulk Keep on Device — outcome lands in the
                     // shared banner, so the tap always answers (2.1a).
@@ -644,6 +647,9 @@ private struct EventsListRoot: View {
                     } label: {
                         Label("Keep selected (\(selection.selectedIDs.count))",
                               systemImage: "square.and.arrow.down.on.square")
+                        #if os(macOS)
+                        .labelStyle(.titleAndIcon)
+                        #endif
                     }
                 }
                 ToolbarItem {
@@ -652,6 +658,9 @@ private struct EventsListRoot: View {
                     } label: {
                         Label("Export selected (\(selection.selectedIDs.count))",
                               systemImage: "square.and.arrow.up.on.square")
+                        #if os(macOS)
+                        .labelStyle(.titleAndIcon)
+                        #endif
                     }
                 }
                 ToolbarItem {
@@ -661,6 +670,9 @@ private struct EventsListRoot: View {
                     } label: {
                         Label("Delete selected (\(selection.selectedIDs.count))",
                               systemImage: "trash")
+                        #if os(macOS)
+                        .labelStyle(.titleAndIcon)
+                        #endif
                     }
                 }
             }

@@ -156,7 +156,10 @@ struct EventsImportToolbar: ToolbarContent {
             Button {
                 present(.folder)
             } label: {
+                // Title + icon — the bare glyph alone is ambiguous next to
+                // the selection-mode keep/export icons.
                 Label("Import", systemImage: "square.and.arrow.down")
+                    .labelStyle(.titleAndIcon)
             }
             #endif
         }

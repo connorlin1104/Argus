@@ -65,14 +65,28 @@ struct EventShareMenu: View {
             }
 
             #if os(macOS)
+            // The macOS share sheet has no save-to-disk service (unlike iOS's
+            // Save to Files), so without these the only way to get files out
+            // locally was a Messages round-trip to yourself.
+            Divider()
+
+            // BUTTON: copy the event's clip files into a user-chosen folder.
+            Button {
+                Task { await saveClips() }
+            } label: {
+                Label("Save clips to folder…", systemImage: "folder")
+            }
+            .disabled(matchedVideos.isEmpty)
+
             // BUTTON: write the Evidence Package PDF straight to disk via a
-            // save panel — sharing a file to yourself (Messages round-trip)
-            // shouldn't be the only way to get the report out.
+            // save panel.
             Button {
                 Task { await saveReport() }
             } label: {
                 Label("Save report as PDF…", systemImage: "square.and.arrow.down")
             }
+
+            Divider()
             #endif
 
             // BUTTON: open the first matched clip in Quick Look
@@ -128,6 +142,26 @@ struct EventShareMenu: View {
     }
 
     #if os(macOS)
+    /// Copy the matched clip files into a folder the user picks. The open
+    /// panel's grant covers the chosen directory, so vend can write there.
+    @MainActor
+    private func saveClips() async {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.prompt = "Save Clips"
+        panel.message = "Choose a folder for this event's clips."
+        guard panel.runModal() == .OK, let dir = panel.url else { return }
+        for video in matchedVideos {
+            do {
+                _ = try EventFileVendor.vend(video: video, stagingRoot: dir)
+            } catch {
+                print("EventShareMenu: couldn't save \(video.url.lastPathComponent): \(error)")
+            }
+        }
+    }
+
     /// Generate the Evidence Package PDF directly at a user-chosen location.
     @MainActor
     private func saveReport() async {
