@@ -104,12 +104,12 @@ extension SyncedMultiCamPlayerView {
                 .foregroundStyle(.secondary)
 
             #if os(macOS)
-            // BUTTON: ±5s export (macOS only). Full label — the bare icon
-            // read as a generic import/export affordance.
+            // BUTTON: ±5s clip export (macOS only). Full label — the bare
+            // icon read as a generic import/export affordance.
             Button {
                 Task { await exportCurrentClip() }
             } label: {
-                Label("Export ±5s", systemImage: "square.and.arrow.down")
+                Label("Export Clip", systemImage: "square.and.arrow.down")
             }
             .help("Save a 10-second clip of the \(TeslaCamera.displayName(for: primaryCamera)) camera around the current position")
             .disabled(isExporting)

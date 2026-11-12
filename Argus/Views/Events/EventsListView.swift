@@ -592,12 +592,9 @@ private struct EventsListRoot: View {
     @ViewBuilder
     private var rows: some View {
         ForEach(filteredEvents) { event in
-            EventRow(event: event)
+            let row = EventRow(event: event)
                 .tag(event.persistentModelID)
                 .contentShape(Rectangle())
-                .onTapGesture {
-                    if !selection.isSelecting { path.append(event) }
-                }
                 .contextMenu {
                     EventRowContextMenu(
                         event: event,
@@ -606,6 +603,14 @@ private struct EventsListRoot: View {
                         onDelete: { pendingDeletion = [event] }
                     )
                 }
+            if selection.isSelecting {
+                // No tap gesture in select mode — a row-level gesture eats
+                // the clicks the List needs for its selection handling
+                // (plain click, cmd-click, shift-click all dead-ended).
+                row
+            } else {
+                row.onTapGesture { path.append(event) }
+            }
         }
     }
 

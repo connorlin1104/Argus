@@ -13,7 +13,6 @@ enum EventFileVendor {
 
     enum VendorError: Error {
         case bookmarkResolutionFailed
-        case accessDenied
         case copyFailed(underlying: Error)
     }
 
@@ -32,9 +31,13 @@ enum EventFileVendor {
         guard let source = BookmarkResolver.resolveURL(for: video) else {
             throw VendorError.bookmarkResolutionFailed
         }
+        // A false return is NOT a failure: app-owned local copies (ClipStore)
+        // aren't security-scoped, so startAccessing returns false for them
+        // while the file reads fine. Treating false as access-denied silently
+        // skipped every kept-on-device clip from shares and zip exports. If
+        // the file truly is unreadable, the copy below throws a real error.
         let didAccess = source.startAccessingSecurityScopedResource()
         defer { if didAccess { source.stopAccessingSecurityScopedResource() } }
-        guard didAccess else { throw VendorError.accessDenied }
 
         let dir: URL = {
             if let subfolder { return stagingRoot.appendingPathComponent(subfolder, isDirectory: true) }

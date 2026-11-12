@@ -96,8 +96,10 @@ struct EventShareMenu: View {
         let staging = EventFileVendor.makeStagingRoot(prefix: "event-share")
         var urls: [URL] = []
         for video in matchedVideos {
-            if let url = try? EventFileVendor.vend(video: video, stagingRoot: staging) {
-                urls.append(url)
+            do {
+                urls.append(try EventFileVendor.vend(video: video, stagingRoot: staging))
+            } catch {
+                print("EventShareMenu: couldn't stage \(video.url.lastPathComponent): \(error)")
             }
         }
         return urls
