@@ -645,7 +645,7 @@ private struct EventsListRoot: View {
                     Button {
                         runKeepSelected()
                     } label: {
-                        Label("Keep selected (\(selection.selectedIDs.count))",
+                        Label("Keep on Device (\(selection.selectedIDs.count))",
                               systemImage: "square.and.arrow.down.on.square")
                         #if os(macOS)
                         .labelStyle(.titleAndIcon)
@@ -656,7 +656,7 @@ private struct EventsListRoot: View {
                     Button {
                         runExport()
                     } label: {
-                        Label("Export selected (\(selection.selectedIDs.count))",
+                        Label("Export (\(selection.selectedIDs.count))",
                               systemImage: "square.and.arrow.up.on.square")
                         #if os(macOS)
                         .labelStyle(.titleAndIcon)
@@ -668,7 +668,7 @@ private struct EventsListRoot: View {
                     Button(role: .destructive) {
                         pendingDeletion = selection.resolveSelected(from: events)
                     } label: {
-                        Label("Delete selected (\(selection.selectedIDs.count))",
+                        Label("Delete (\(selection.selectedIDs.count))",
                               systemImage: "trash")
                         #if os(macOS)
                         .labelStyle(.titleAndIcon)

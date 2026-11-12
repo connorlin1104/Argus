@@ -10,8 +10,8 @@
 //            front.mp4
 //            left.mp4
 //            ...
-//            event.json     (Event metadata + summary)
-//            event.pdf      (Evidence Package report)
+//            event.json           (Event metadata + summary)
+//            evidence-report.pdf  (Evidence Package report)
 //
 
 import Foundation
@@ -128,7 +128,7 @@ enum EventExporter {
             // part of the export.
             do {
                 let pdfURL = metaURL.deletingLastPathComponent()
-                    .appendingPathComponent("event.pdf")
+                    .appendingPathComponent("evidence-report.pdf")
                 try await EvidencePackageRenderer.writePDF(
                     event: entry.event,
                     videos: entry.videos,
@@ -136,7 +136,7 @@ enum EventExporter {
                     to: pdfURL
                 )
             } catch {
-                pdfFailures.append("event.pdf (\(subfolder))")
+                pdfFailures.append("evidence-report.pdf (\(subfolder))")
             }
 
             let label = "Staged \(i + 1)/\(events.count)"
