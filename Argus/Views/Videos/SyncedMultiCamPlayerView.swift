@@ -63,6 +63,10 @@ struct SyncedMultiCamPlayerView: View {
     @State var primaryCamera: String = ""
     @State var isScrubbing: Bool = false
     @State var isExporting: Bool = false
+    /// True while setupPlayers decode-verifies and stitches clips. That takes
+    /// a few seconds on iPhone, and the black tiles it shows in the meantime
+    /// read as a hang without a spinner.
+    @State var isLoadingPlayers: Bool = false
     /// Per-camera width:height ratio measured from each clip's video track.
     /// Tesla footage size differs by hardware generation (HW3 is 4:3, HW4 is
     /// ~3:2), so tiles read from here instead of assuming one ratio.
@@ -133,12 +137,32 @@ struct SyncedMultiCamPlayerView: View {
             }
         }
         .task(id: videoFingerprint) {
+            isLoadingPlayers = true
             await setupPlayers()
+            isLoadingPlayers = false
+            // Cosmetic (tiles show the 4:3 fallback until ratios land) — no
+            // reason to hold the loading overlay for it.
             await loadAspectRatios()
         }
         .onDisappear {
             tearDown()
         }
+    }
+
+    /// UI: spinner shown over the tiles while players set up. White styling —
+    /// the tiles underneath render black until their players exist.
+    private var loadingOverlay: some View {
+        VStack(spacing: 10) {
+            ProgressView()
+                .controlSize(.large)
+                .tint(.white)
+            Text("Loading footage…")
+                .font(.callout.weight(.medium))
+                .foregroundStyle(.white.opacity(0.85))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(.black.opacity(0.35))
+        .allowsHitTesting(false)
     }
 
     /// macOS / iPad / iPhone-portrait layout — natural vertical stacking with
@@ -153,12 +177,17 @@ struct SyncedMultiCamPlayerView: View {
             // UI: main player area — 2x2 grid or focused single tile.
             // Camera-select buttons now live OUTSIDE this view (see EventDetailView),
             // so the tile/grid can hug the right edge cleanly.
-            if let focused = focusedCamera {
-                tile(camID: focused, showsExitButton: false)
-                    .frame(maxWidth: focusTileMaxWidth)
-            } else {
-                grid()
-                    .frame(maxWidth: playerMaxWidth)
+            Group {
+                if let focused = focusedCamera {
+                    tile(camID: focused, showsExitButton: false)
+                        .frame(maxWidth: focusTileMaxWidth)
+                } else {
+                    grid()
+                        .frame(maxWidth: playerMaxWidth)
+                }
+            }
+            .overlay {
+                if isLoadingPlayers { loadingOverlay }
             }
 
             keyboardShortcutLayer
@@ -196,12 +225,17 @@ struct SyncedMultiCamPlayerView: View {
             let gridTotalWidth = gridTileWidth * 2 + gridSpacing
 
             VStack(spacing: 8) {
-                if let focused = focusedCamera {
-                    tile(camID: focused, showsExitButton: false)
-                        .frame(maxWidth: focusTileMaxWidth, maxHeight: videoBudget)
-                } else {
-                    grid(tileMaxHeight: gridTileMax)
-                        .frame(maxWidth: min(playerMaxWidth, gridTotalWidth))
+                Group {
+                    if let focused = focusedCamera {
+                        tile(camID: focused, showsExitButton: false)
+                            .frame(maxWidth: focusTileMaxWidth, maxHeight: videoBudget)
+                    } else {
+                        grid(tileMaxHeight: gridTileMax)
+                            .frame(maxWidth: min(playerMaxWidth, gridTotalWidth))
+                    }
+                }
+                .overlay {
+                    if isLoadingPlayers { loadingOverlay }
                 }
 
                 keyboardShortcutLayer
