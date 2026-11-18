@@ -56,7 +56,10 @@ struct EventNLSearcherTests {
     // MARK: - Scoring
 
     @Test func scoreCountsTermsTagsAndRawMatch() {
-        let plain = candidates([event(summary: "A person stayed near the rear camera.")])[0]
+        // Query deliberately matches nothing so the raw-match boost stays out
+        // of the way (EventSearchMatcher treats an empty query as match-all).
+        let plain = candidates([event(summary: "A person stayed near the rear camera.")],
+                               query: "zzzqqq")[0]
         let plan = EventNLSearcher.Plan(terms: ["person", "rear", "banana"])
         // Two term hits, no tag, no raw match.
         #expect(EventNLSearcher.score(plain, plan: plan) == 2)
@@ -64,7 +67,8 @@ struct EventNLSearcherTests {
         var tagged = plan
         tagged.tags = ["lingered"]
         let lingerer = candidates([event(summary: "A person stayed near the rear camera.",
-                                         tag: "lingered")])[0]
+                                         tag: "lingered")],
+                                  query: "zzzqqq")[0]
         #expect(EventNLSearcher.score(lingerer, plan: tagged) == 4)
     }
 
