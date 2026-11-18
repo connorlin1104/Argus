@@ -95,8 +95,10 @@ enum EvidenceReportBlock {
                 placeholder: true)
             case .metadata: EvidenceMetadataBlock(data: data)
             case .watchlist: EvidenceWatchlistBlock(data: data)
+            // TEXT: "Possible" because these are raw OCR reads — one plate
+            // shows up as several near-identical variants.
             case .plates: EvidenceTextBlock(
-                title: "Detected plates",
+                title: "Possible plates",
                 text: data.plateReads.joined(separator: "   "),
                 placeholder: false)
             case .footer: EvidenceFooterBlock(data: data)
