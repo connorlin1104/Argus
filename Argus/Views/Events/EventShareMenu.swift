@@ -89,9 +89,9 @@ struct EventShareMenu: View {
             Divider()
             #endif
 
-            // BUTTON: open the first matched clip in Quick Look
+            // BUTTON: open the most active matched clip in Quick Look
             Button {
-                Task { quickLookURL = await stageClips().first }
+                Task { quickLookURL = await stageQuickLookClip() }
             } label: {
                 Label("Quick Look", systemImage: "eye")
             }
@@ -117,6 +117,28 @@ struct EventShareMenu: View {
             }
         }
         return urls
+    }
+
+    /// Quick Look previews a single file, so stage the clip where something
+    /// actually happens — most human detection markers, total markers as the
+    /// tiebreaker — instead of an arbitrary first match, which was usually a
+    /// camera pointed at nothing.
+    @MainActor
+    private func stageQuickLookClip() async -> URL? {
+        func activity(_ video: VideoRecording) -> (Int, Int) {
+            let markers = video.markers
+            return (markers.filter { $0.kind == "human" }.count, markers.count)
+        }
+        guard let best = matchedVideos.max(by: { activity($0) < activity($1) }) else {
+            return nil
+        }
+        let staging = EventFileVendor.makeStagingRoot(prefix: "event-share")
+        do {
+            return try EventFileVendor.vend(video: best, stagingRoot: staging)
+        } catch {
+            print("EventShareMenu: couldn't stage \(best.url.lastPathComponent): \(error)")
+            return nil
+        }
     }
 
     /// Generate the Evidence Package PDF into session-lifetime staging
