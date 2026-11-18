@@ -9,6 +9,7 @@
 
 import Foundation
 import Observation
+import SwiftData
 
 /// Which prebuilt smart-filter chip is active, if any.
 enum SmartFilter: String, CaseIterable, Identifiable {
@@ -58,6 +59,28 @@ final class EventsListFilterState {
             case .score:  return "Highest score"
             }
         }
+    }
+
+    // === AI search (EventNLSearcher) ===
+    // Set when the user presses Return in the search field; cleared on any
+    // text edit. INVARIANT: these may be read only in EventsListRoot's BODY,
+    // never in its init/descriptor — reading them there would re-create the
+    // root (and its @Query) on every mutation, tearing the world out from
+    // under the in-flight search task.
+
+    /// Ranked result IDs. nil = keyword mode; [] = AI search ran, no matches.
+    var aiResultIDs: [PersistentIdentifier]? = nil
+    /// Query the current AI results belong to (shown in the banner).
+    var aiQuery: String = ""
+    var aiIsSearching: Bool = false
+    /// Unavailability notice for the banner (Apple Intelligence off).
+    var aiNotice: String? = nil
+
+    func clearAISearch() {
+        aiResultIDs = nil
+        aiQuery = ""
+        aiIsSearching = false
+        aiNotice = nil
     }
 
     // Filtering and sorting are translated into the events list's @Query

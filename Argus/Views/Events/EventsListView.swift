@@ -95,6 +95,12 @@ private struct EventsListRoot: View {
     /// Range picked in the sheet; nil means the sheet was cancelled.
     @State private var chosenImportScope: ImportScope? = nil
 
+    // === AI search ===
+    /// In-flight natural-language search. Lives here (not in filterState)
+    /// because it's plumbing, not filter state; unstructured, so it keeps
+    /// running even if a chip change re-creates this root mid-search.
+    @State private var aiSearchTask: Task<Void, Never>? = nil
+
     // === Export state ===
     @State private var exportInProgress: Bool = false
     @State private var exportProgress: Double = 0
@@ -211,6 +217,13 @@ private struct EventsListRoot: View {
     /// Free-text search over the already query-filtered set. This is the only
     /// remaining in-memory pass.
     var filteredEvents: [Event] {
+        // AI results (Return pressed): keep the model's ranked order, mapped
+        // through the live query so chip/archive filters still apply — an
+        // event the current chips exclude silently drops from the AI list.
+        if let ids = filterState.aiResultIDs {
+            let byID = Dictionary(uniqueKeysWithValues: events.map { ($0.persistentModelID, $0) })
+            return ids.compactMap { byID[$0] }
+        }
         guard !filterState.searchText.isEmpty else { return events }
         return events.filter { EventSearchMatcher.matches(event: $0, query: filterState.searchText) }
     }
@@ -262,6 +275,17 @@ private struct EventsListRoot: View {
                 #else
                 .searchable(text: $filterState.searchText, prompt: "Search city, plate, summary, name…")
                 #endif
+                // Return runs the AI pass over summaries; typing stays
+                // instant keyword search.
+                .onSubmit(of: .search) { startAISearch() }
+                .onChange(of: filterState.searchText) { _, _ in
+                    // Any edit drops back to keyword mode. Guarded so plain
+                    // typing doesn't touch AI state on every keystroke.
+                    guard filterState.aiResultIDs != nil || filterState.aiIsSearching
+                            || filterState.aiNotice != nil else { return }
+                    aiSearchTask?.cancel()
+                    filterState.clearAISearch()
+                }
                 .toolbar { toolbarContent }
                 // Single fileImporter for both import modes: SwiftUI ignores a
                 // second fileImporter attached to the same view (its binding
@@ -566,6 +590,7 @@ private struct EventsListRoot: View {
     private var populatedContent: some View {
         VStack(spacing: 0) {
             EventsSmartFilterBar(state: filterState)
+            aiSearchBanner
             if filteredEvents.isEmpty {
                 ContentUnavailableView.search
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -576,6 +601,66 @@ private struct EventsListRoot: View {
         // Presenter for the context menu's Quick Look — anchored here so it
         // survives the menu's dismissal.
         .quickLookPreview($quickLookURL)
+    }
+
+    /// Status row for the Return-triggered AI search: progress while the two
+    /// model calls run, then explicit "AI results" framing — the results are
+    /// model-ranked and can be wrong, so the label plus a one-tap way back to
+    /// keyword matches is the mitigation. Also hosts the unavailability
+    /// notice so Return always answers visibly (2.1a).
+    @ViewBuilder
+    private var aiSearchBanner: some View {
+        if filterState.aiIsSearching {
+            HStack(spacing: 10) {
+                ProgressView().controlSize(.small)
+                // TEXT: AI search in-flight banner
+                Text("Searching with AI…")
+                    .font(.callout)
+                // BUTTON: cancel AI search
+                Button("Cancel") {
+                    aiSearchTask?.cancel()
+                    filterState.clearAISearch()
+                }
+                .buttonStyle(.borderless)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else if filterState.aiResultIDs != nil {
+            HStack(spacing: 10) {
+                Image(systemName: "sparkles")
+                    .foregroundStyle(.tint)
+                // TEXT: AI results banner
+                Text("AI results for “\(filterState.aiQuery)” — \(filteredEvents.count)")
+                    .font(.callout)
+                    .lineLimit(1)
+                // BUTTON: back to plain keyword matching
+                Button("Show keyword matches") {
+                    filterState.clearAISearch()
+                }
+                .buttonStyle(.borderless)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else if let notice = filterState.aiNotice {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                // TEXT: AI search unavailable notice
+                Text(notice)
+                    .font(.callout)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button {
+                    filterState.clearAISearch()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.borderless)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     @ViewBuilder
@@ -771,6 +856,36 @@ private struct EventsListRoot: View {
             if alreadyKept > 0 { text += " \(alreadyKept) already saved." }
             if failed > 0 { text += " \(failed) couldn't be saved — plug in the drive they came from, check free space, and try again." }
             ImportFeedback.shared.message = text
+        }
+    }
+
+    // MARK: - AI search
+
+    /// Runs the two-stage natural-language search over the current query
+    /// results. Candidates are snapshotted on the main actor first (SwiftData
+    /// models can't cross actors); the unstructured Task keeps running even
+    /// if this root is re-created, and the stale guard drops results that
+    /// land after the query text changed.
+    private func startAISearch() {
+        let query = filterState.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty, !events.isEmpty else { return }
+        guard EventNLSearcher.isAvailable else {
+            // Return must answer visibly even when the model can't run.
+            filterState.aiNotice = EventNLSearcher.unavailabilityExplanation
+            return
+        }
+        aiSearchTask?.cancel()
+        filterState.aiIsSearching = true
+        filterState.aiNotice = nil
+        filterState.aiResultIDs = nil
+        let candidates = EventNLSearcher.makeCandidates(events: events, query: query)
+        aiSearchTask = Task { @MainActor in
+            let ordered = await EventNLSearcher.search(query: query, candidates: candidates)
+            let current = filterState.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !Task.isCancelled, current == query else { return }
+            filterState.aiResultIDs = ordered
+            filterState.aiQuery = query
+            filterState.aiIsSearching = false
         }
     }
 
