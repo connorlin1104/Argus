@@ -104,10 +104,11 @@ final class AutoSummaryRunner {
     }
 }
 
-/// Per-call timeout for the FoundationModels session. Returns nil if the
-/// `body` hasn't finished within `seconds`.
-private func withTimeout<T: Sendable>(seconds: Double,
-                                      body: @escaping @Sendable () async -> T) async -> T? {
+/// Per-call timeout for a FoundationModels session. Returns nil if the
+/// `body` hasn't finished within `seconds`. Internal — EventNLSearcher
+/// wraps its two model calls with it too.
+func withTimeout<T: Sendable>(seconds: Double,
+                              body: @escaping @Sendable () async -> T) async -> T? {
     await withTaskGroup(of: T?.self) { group in
         group.addTask { await body() }
         group.addTask {

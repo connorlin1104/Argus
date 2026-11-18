@@ -37,8 +37,9 @@ enum EventSearchMatcher {
     }
 
     /// All searchable text fields, lowercased and deduplicated. Order doesn't
-    /// matter — we only test `contains` on each token.
-    private static func haystack(for event: Event) -> [String] {
+    /// matter — we only test `contains` on each token. Internal because
+    /// EventNLSearcher scores candidates against the same field list.
+    static func haystack(for event: Event) -> [String] {
         let fields: [String] = [
             event.city, event.reason, event.zone, event.summary, event.address,
             event.tag, event.camera, event.notes, event.customName, event.plateText
