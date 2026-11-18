@@ -143,6 +143,10 @@ enum EventExporter {
             await MainActor.run { progress(Double(i + 1) / total, label) }
         }
 
+        // Zipping a multi-GB staging folder takes real time; without its own
+        // label the sheet sat on Staged N/N looking stalled.
+        await MainActor.run { progress(1.0, "Compressing zip…") }
+
         // The zip is self-contained — remove the unzipped staging copies as
         // soon as it exists (or if zipping fails) so plaintext video copies
         // don't linger in the temp dir.

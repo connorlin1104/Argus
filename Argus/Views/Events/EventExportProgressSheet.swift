@@ -122,12 +122,18 @@ struct EventExportProgressSheet: View {
                 // Dismissed without picking anything → no message.
             }
         }
-        UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
+        guard let root = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
             .first?
             .keyWindow?
-            .rootViewController?
-            .present(av, animated: true)
+            .rootViewController else { return }
+        // This sheet is itself presented — presenting from the root while it's
+        // up silently fails, so walk to the top of the presentation chain.
+        var presenter = root
+        while let presented = presenter.presentedViewController {
+            presenter = presented
+        }
+        presenter.present(av, animated: true)
     }
     #endif
 }
