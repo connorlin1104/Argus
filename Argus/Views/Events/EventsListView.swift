@@ -592,8 +592,15 @@ private struct EventsListRoot: View {
             EventsSmartFilterBar(state: filterState)
             aiSearchBanner
             if filteredEvents.isEmpty {
-                ContentUnavailableView.search
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // A natural-language query usually has zero keyword matches,
+                // so mid-search the pane would read as "No Results" — show the
+                // searching state front and center instead.
+                if filterState.aiIsSearching {
+                    aiSearchingPlaceholder
+                } else {
+                    ContentUnavailableView.search
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             } else {
                 listBody
             }
@@ -610,7 +617,10 @@ private struct EventsListRoot: View {
     /// notice so Return always answers visibly (2.1a).
     @ViewBuilder
     private var aiSearchBanner: some View {
-        if filterState.aiIsSearching {
+        // While keyword matches are still visible the in-flight state is this
+        // compact row; with zero visible rows it moves into the content pane
+        // (aiSearchingPlaceholder) so the screen never looks empty mid-search.
+        if filterState.aiIsSearching && !filteredEvents.isEmpty {
             HStack(spacing: 10) {
                 ProgressView().controlSize(.small)
                 // TEXT: AI search in-flight banner
@@ -661,6 +671,24 @@ private struct EventsListRoot: View {
             .padding(.vertical, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    /// Centered stand-in for the empty-results pane while the AI search runs.
+    private var aiSearchingPlaceholder: some View {
+        VStack(spacing: 12) {
+            ProgressView()
+                .controlSize(.large)
+            // TEXT: AI search in-flight placeholder
+            Text("Searching with AI…")
+                .font(.headline)
+            // BUTTON: cancel AI search (placeholder variant)
+            Button("Cancel") {
+                aiSearchTask?.cancel()
+                filterState.clearAISearch()
+            }
+            .buttonStyle(.borderless)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     @ViewBuilder
